@@ -40,7 +40,7 @@ export interface Student {
   lastUpdated: string;
 }
 
-export type NavTab = 'overview' | 'students' | 'analytics' | 'data-import';
+export type NavTab = 'overview' | 'students' | 'analytics' | 'data-import' | 'student-portal' | 'demo-users';
 
 export type DatasetSource = 'Synthetic Demo' | 'Imported CSV' | 'Supabase DB';
 
@@ -90,3 +90,47 @@ export interface CsvValidationSummary {
   validStudents: Student[];
   allParsedRaw: Record<string, string>[];
 }
+
+export type UserRole = 'student' | 'teacher' | 'admin';
+
+export interface UserProfile {
+  id: string;
+  email: string;
+  fullName: string;
+  role: UserRole;
+  isActive: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface ClassSection {
+  id: string;
+  code: string;
+  department: string;
+  semester: number;
+  section: string;
+}
+
+export interface TeacherAssignment {
+  id: string;
+  teacherId: string;
+  classId: string;
+  isActive: boolean;
+  class?: ClassSection;
+}
+
+export interface DemoIdentity {
+  id: string;
+  name: string;
+  email: string;
+  role: UserRole;
+  title: string;
+  department: string;
+  assignedScope?: string;
+  assignedStudentId?: string;
+  assignedClassCode?: string;
+  status: string;
+  badge: string;
+  bio?: string;
+}
+

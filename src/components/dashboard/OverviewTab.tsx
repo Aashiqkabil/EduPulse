@@ -106,9 +106,9 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
   }
 
   // Priority attention students (High academic or placement risk)
-  const priorityStudents = students
-    .filter(s => s.academicRisk === 'High' || s.placementRisk === 'High')
-    .slice(0, 6);
+  const allPriorityStudents = students.filter(s => s.academicRisk === 'High' || s.placementRisk === 'High');
+  const totalPriorityCount = allPriorityStudents.length;
+  const priorityStudents = allPriorityStudents.slice(0, 6);
 
   return (
     <div className="space-y-6">
@@ -439,7 +439,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
         <div className="p-4 bg-slate-50/50 border-t border-slate-100 flex items-center justify-between">
           <div className="flex items-center gap-2 text-xs text-slate-500">
             <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-            <span>Students requiring mentor intervention ({priorityStudents.length} identified)</span>
+            <span>Top {priorityStudents.length} priority interventions shown ({totalPriorityCount} total high-risk identified)</span>
           </div>
           <button
             onClick={() => onNavigateTab('students')}

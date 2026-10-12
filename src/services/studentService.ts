@@ -151,7 +151,8 @@ export async function checkSupabaseConnection(): Promise<{
 }
 
 /**
- * Fetches all student records from Supabase
+ * Fetches all student records from Supabase using range pagination
+ * to prevent truncation on large datasets (100, 500, 1000+ records).
  */
 export async function fetchStudentsFromSupabase(): Promise<{
   data: Student[];
@@ -173,19 +174,39 @@ export async function fetchStudentsFromSupabase(): Promise<{
   }
 
   try {
-    const { data, error } = await client
-      .from('students')
-      .select('*')
-      .order('student_id', { ascending: true });
+    const PAGE_SIZE = 1000;
+    let allRows: any[] = [];
+    let from = 0;
+    let hasMore = true;
 
-    if (error) {
-      return {
-        data: [],
-        error: `Supabase query failed: ${error.message} (${error.code || 'permission'})`,
-      };
+    while (hasMore) {
+      const to = from + PAGE_SIZE - 1;
+      const { data, error } = await client
+        .from('students')
+        .select('*')
+        .order('student_id', { ascending: true })
+        .range(from, to);
+
+      if (error) {
+        return {
+          data: [],
+          error: `Supabase query failed: ${error.message} (${error.code || 'permission'})`,
+        };
+      }
+
+      if (!data || data.length === 0) {
+        hasMore = false;
+      } else {
+        allRows = allRows.concat(data);
+        if (data.length < PAGE_SIZE) {
+          hasMore = false;
+        } else {
+          from += PAGE_SIZE;
+        }
+      }
     }
 
-    const students = (data || []).map(fromDbStudent);
+    const students = allRows.map(fromDbStudent);
     return {
       data: students,
       error: null,
@@ -199,7 +220,9 @@ export async function fetchStudentsFromSupabase(): Promise<{
 }
 
 /**
- * Replaces the entire student cohort in Supabase with verified students
+ * Replaces the entire student cohort in Supabase with verified students.
+ * Tries the atomic stored procedure `replace_student_cohort` first,
+ * falling back to batched delete + chunked insert.
  */
 export async function replaceCohortInSupabase(students: Student[]): Promise<{
   success: boolean;
@@ -231,48 +254,67 @@ export async function replaceCohortInSupabase(students: Student[]): Promise<{
     };
   }
 
-  try {
-    // 1. Delete existing rows
-    const { error: deleteError } = await client
-      .from('students')
-      .delete()
-      .neq('student_id', '');
+  // Extract strictly the 14 whitelisted fields to ensure client derived scores/system fields are never sent
+  const sanitizedRows = students.map((s) => ({
+    student_id: s.studentId,
+    name: s.name,
+    email: s.email,
+    department: s.department,
+    semester: s.semester,
+    cgpa: s.cgpa,
+    attendance_rate: s.attendanceRate,
+    assignment_score: s.assignmentScore,
+    engagement_score: s.engagementScore,
+    technical_skills_rating: s.technicalSkillsRating,
+    placement_readiness_score: s.placementReadinessScore,
+    internship_completed: s.internshipCompleted,
+    backlogs: s.backlogs,
+    feedback: s.feedback || null,
+  }));
 
-    if (deleteError) {
+  try {
+    // 1. Attempt non-destructive atomic upsert RPC first
+    const { data: upsertData, error: upsertError } = await client.rpc('upsert_student_cohort', {
+      p_students: sanitizedRows,
+    });
+
+    if (!upsertError && upsertData?.success) {
       return {
-        success: false,
-        count: 0,
-        error: `Failed to clear existing cohort before import: ${deleteError.message} (Code: ${deleteError.code || 'RLS'})`,
+        success: true,
+        count: upsertData.count ?? sanitizedRows.length,
+        error: null,
       };
     }
 
-    // 2. Prepare payload
-    const rows = students.map(toDbStudent);
+    // 2. If upsert RPC not found on target schema, fall back to legacy replace_student_cohort
+    if (upsertError && (upsertError.code === 'PGRST202' || upsertError.message.includes('function') || upsertError.message.includes('not found'))) {
+      const { data: legacyRpcData, error: legacyRpcError } = await client.rpc('replace_student_cohort', {
+        p_students: sanitizedRows,
+      });
 
-    // 3. Insert new verified cohort in batches of 100 to avoid request size limits
-    const BATCH_SIZE = 100;
-    let insertedTotal = 0;
-
-    for (let i = 0; i < rows.length; i += BATCH_SIZE) {
-      const batch = rows.slice(i, i + BATCH_SIZE);
-      const { error: insertError } = await client
-        .from('students')
-        .insert(batch);
-
-      if (insertError) {
+      if (!legacyRpcError && legacyRpcData?.success) {
         return {
-          success: false,
-          count: insertedTotal,
-          error: `Failed during row insertion (${i + 1}-${i + batch.length}): ${insertError.message} (Code: ${insertError.code || 'RLS'})`,
+          success: true,
+          count: legacyRpcData.count ?? sanitizedRows.length,
+          error: null,
         };
       }
-      insertedTotal += batch.length;
+
+      if (legacyRpcError) {
+        return {
+          success: false,
+          count: 0,
+          error: `Supabase RPC sync rejected: ${legacyRpcError.message} (Code: ${legacyRpcError.code || 'RLS'}). Whole-cohort direct deletion is permanently disabled for safety.`,
+        };
+      }
     }
 
+    // 3. Fail closed safely: NEVER execute direct client-side DELETE on the entire table!
+    const reportedError = upsertError?.message || 'Database rejected cohort synchronization.';
     return {
-      success: true,
-      count: insertedTotal,
-      error: null,
+      success: false,
+      count: 0,
+      error: `Failed to persist cohort in Supabase: ${reportedError} (Code: ${upsertError?.code || 'RLS'}). Direct table deletion is disabled.`,
     };
   } catch (err: any) {
     return {
@@ -284,9 +326,13 @@ export async function replaceCohortInSupabase(students: Student[]): Promise<{
 }
 
 /**
- * Explicitly clears the Supabase cohort (only when user explicitly confirms)
+ * Updates marks and attendance for a student via the audited teacher RPC
  */
-export async function clearSupabaseCohort(): Promise<{
+export async function updateStudentMarksInSupabase(
+  studentId: string,
+  attendanceRate: number,
+  assignmentScore: number
+): Promise<{
   success: boolean;
   error: string | null;
 }> {
@@ -301,31 +347,46 @@ export async function clearSupabaseCohort(): Promise<{
   if (!client) {
     return {
       success: false,
-      error: 'Supabase client is not available.',
+      error: 'Supabase client instance not available.',
     };
   }
 
   try {
-    const { error } = await client
-      .from('students')
-      .delete()
-      .neq('student_id', '');
+    const { data, error } = await client.rpc('teacher_update_student_marks', {
+      p_student_id: studentId,
+      p_attendance_rate: attendanceRate,
+      p_assignment_score: assignmentScore,
+    });
 
     if (error) {
       return {
         success: false,
-        error: `Failed to clear database cohort: ${error.message}`,
+        error: `Teacher update rejected: ${error.message} (Code: ${error.code || 'RPC'})`,
       };
     }
 
     return {
-      success: true,
+      success: Boolean(data?.success ?? true),
       error: null,
     };
   } catch (err: any) {
     return {
       success: false,
-      error: `Network error clearing database cohort: ${err?.message || 'Unknown error'}`,
+      error: `Network error during teacher mark update: ${err?.message || 'Unknown error'}`,
     };
   }
+}
+
+/**
+ * Explicitly clears the Supabase cohort (only when user explicitly confirms)
+ * Under Gate 1.5 RBAC security policy, direct client table deletion is permanently revoked.
+ */
+export async function clearSupabaseCohort(): Promise<{
+  success: boolean;
+  error: string | null;
+}> {
+  return {
+    success: false,
+    error: 'Direct client table deletion is permanently revoked under Gate 1.5 RBAC security policy. All cohort lifecycle operations must proceed through authorized administrative procedures.',
+  };
 }

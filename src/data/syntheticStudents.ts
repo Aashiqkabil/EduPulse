@@ -1,4 +1,4 @@
-import { Student } from '../types/student';
+import { Student, DemoIdentity } from '../types/student';
 import { calculateStudentSuccessScore } from '../utils/scoringEngine';
 
 export const DATASET_METADATA = {
@@ -406,3 +406,170 @@ export const SYNTHETIC_STUDENTS: Student[] = RAW_SYNTHETIC_DATA.map((item) => {
     lastUpdated: item.lastUpdated
   };
 });
+
+const FIRST_NAMES = [
+  'Aarav', 'Ananya', 'Rohan', 'Priya', 'Vikram', 'Sneha', 'Aditya', 'Neha', 
+  'Karan', 'Pooja', 'Rahul', 'Divya', 'Siddharth', 'Meera', 'Varun', 'Rhea', 
+  'Amit', 'Ishaan', 'Tanvi', 'Kabir', 'Akash', 'Shruti', 'Nikhil', 'Swati',
+  'Dev', 'Kavita', 'Manish', 'Ritika', 'Harsh', 'Anjali', 'Gaurav', 'Deepa'
+];
+
+const LAST_NAMES = [
+  'Sharma', 'Iyer', 'Verma', 'Patel', 'Reddy', 'Deshmukh', 'Gupta', 'Singh',
+  'Mehta', 'Nair', 'Chopra', 'Joshi', 'Menon', 'Kulkarni', 'Bose', 'Kapoor',
+  'Banerjee', 'Rao', 'Bhat', 'Agarwal', 'Saxena', 'Pandey', 'Malhotra', 'Mishra'
+];
+
+const DEPARTMENTS = [
+  'Computer Science', 'Data Science', 'Information Technology', 
+  'AI & Machine Learning', 'Electronics', 'Mechanical'
+];
+
+/**
+ * Generates an arbitrary number of realistic synthetic student records
+ * supporting scalable benchmarks (e.g. 20, 21, 100, 500, 1,000+ records).
+ */
+export function generateSyntheticCohort(count: number): Student[] {
+  if (count <= 0) return [];
+  if (count === 20) return SYNTHETIC_STUDENTS;
+  if (count < 20) return SYNTHETIC_STUDENTS.slice(0, count);
+
+  const result: Student[] = [...SYNTHETIC_STUDENTS];
+
+  for (let i = 21; i <= count; i++) {
+    const paddedId = String(i).padStart(4, '0');
+    const studentId = `STU-2024-${paddedId}`;
+    
+    // Deterministic pseudo-random values based on index
+    const firstName = FIRST_NAMES[(i * 7 + 3) % FIRST_NAMES.length];
+    const lastName = LAST_NAMES[(i * 11 + 5) % LAST_NAMES.length];
+    const name = `${firstName} ${lastName}`;
+    const email = `${firstName.toLowerCase()}.${lastName.toLowerCase()}${i}@campus.edu`;
+    const department = DEPARTMENTS[i % DEPARTMENTS.length];
+    const semester = ((i % 8) + 1);
+    
+    // Realistic metric distribution
+    const baseVariance = ((i * 17) % 100) / 100;
+    const cgpa = Number((4.5 + baseVariance * 5.2).toFixed(2)); // 4.5 to 9.7
+    const attendanceRate = Math.min(100, Math.max(45, Math.round(50 + baseVariance * 48)));
+    const assignmentScore = Math.min(100, Math.max(40, Math.round(45 + baseVariance * 52)));
+    const engagementScore = Math.min(100, Math.max(35, Math.round(40 + baseVariance * 55)));
+    const technicalSkillsRating = Number((1.5 + baseVariance * 3.4).toFixed(1)); // 1.5 to 4.9
+    const placementReadinessScore = Math.min(100, Math.max(30, Math.round(35 + baseVariance * 62)));
+    const internshipCompleted = baseVariance > 0.45;
+    const backlogs = baseVariance < 0.25 ? Math.round((0.25 - baseVariance) * 12) : 0;
+    const feedback = cgpa >= 8.0 
+      ? 'Strong conceptual understanding and active technical engagement.' 
+      : cgpa >= 6.5 
+      ? 'Steady progress, recommended for additional project mentorship.' 
+      : 'Identified for academic support and structured mentoring intervention.';
+
+    const calc = calculateStudentSuccessScore({
+      cgpa,
+      attendanceRate,
+      assignmentScore,
+      engagementScore,
+      technicalSkillsRating,
+      placementReadinessScore
+    });
+
+    result.push({
+      studentId,
+      name,
+      email,
+      department,
+      semester,
+      cgpa,
+      attendanceRate,
+      assignmentScore,
+      engagementScore,
+      technicalSkillsRating,
+      placementReadinessScore,
+      internshipCompleted,
+      backlogs,
+      feedback,
+      successScore: calc.successScore,
+      academicRisk: calc.academicRisk,
+      placementRisk: calc.placementRisk,
+      scoreBreakdown: calc.scoreBreakdown,
+      hasInsufficientData: calc.hasInsufficientData,
+      incompleteReasons: calc.incompleteReasons,
+      isSynthetic: true,
+      lastUpdated: '2026-10-12'
+    });
+  }
+
+  return result;
+}
+
+/**
+ * Preconfigured Demo Identities for Stage 2 & 3 Hackathon Roles
+ */
+export const DEMO_IDENTITIES: DemoIdentity[] = [
+  {
+    id: 'admin-demo',
+    name: 'Dr. Rajeshwar Rao',
+    email: 'dean.rao@campus.edu',
+    role: 'admin',
+    title: 'Dean of Academic Affairs & Institutional Administrator',
+    department: 'Academic Affairs',
+    assignedScope: 'Institution-Wide (All Cohorts, Analytics & CSV Pipeline)',
+    status: 'Active (Demo Administrator)',
+    badge: 'Institutional Admin',
+    bio: 'Oversees institutional performance metrics, accreditation compliance, and data ingestion pipelines.'
+  },
+  {
+    id: 'teacher-demo',
+    name: 'Prof. Ananya Sharma',
+    email: 'prof.sharma@campus.edu',
+    role: 'teacher',
+    title: 'Associate Professor & Faculty Mentor',
+    department: 'Computer Science',
+    assignedScope: 'Class Section CS-301 (Computer Science, Semester 6)',
+    assignedClassCode: 'CS-301',
+    status: 'Active (Demo Faculty)',
+    badge: 'Faculty Mentor',
+    bio: 'Mentors Section CS-301. Authorized to review student risk alerts and update attendance and assessment marks.'
+  },
+  {
+    id: 'student-demo-a',
+    name: 'Aarav Sharma',
+    email: 'aarav.sharma@campus.edu',
+    role: 'student',
+    title: 'Undergraduate Scholar (High Performer)',
+    department: 'Computer Science',
+    assignedScope: 'Personal Academic Profile (Semester 6)',
+    assignedStudentId: 'STU-2024-001',
+    status: 'Active (Demo Student)',
+    badge: 'Low Risk Tier',
+    bio: 'Top-quartile student with 8.92 CGPA and 94% attendance rate. Preparing for cloud engineering placement.'
+  },
+  {
+    id: 'student-demo-b',
+    name: 'Rohan Verma',
+    email: 'rohan.verma@campus.edu',
+    role: 'student',
+    title: 'Undergraduate Scholar (Academic Intervention Needed)',
+    department: 'Information Technology',
+    assignedScope: 'Personal Academic Profile (Semester 6)',
+    assignedStudentId: 'STU-2024-003',
+    status: 'Active (Demo Student)',
+    badge: 'High Risk Tier',
+    bio: 'Identified for academic mentoring due to attendance below 70% and 2 active backlogs.'
+  }
+];
+
+export const DEFAULT_DEMO_IDENTITY = DEMO_IDENTITIES[0];
+
+/**
+ * Class Section CS-301 assigned student IDs for Teacher Demo
+ */
+export const TEACHER_ASSIGNED_CLASS = {
+  code: 'CS-301',
+  name: 'Data Structures & Algorithms Laboratory',
+  department: 'Computer Science',
+  semester: 6,
+  section: 'A',
+  studentIds: ['STU-2024-001', 'STU-2024-005', 'STU-2024-009', 'STU-2024-013', 'STU-2024-017']
+};
+

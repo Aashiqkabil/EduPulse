@@ -7,10 +7,11 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "test": "node scripts/verify-scoring.mjs && node scripts/verify-milestone2.mjs && node scripts/verify-supabase.mjs",
+    "test": "node scripts/verify-scoring.mjs && node scripts/verify-milestone2.mjs && node scripts/verify-supabase.mjs && node scripts/verify-scalability-and-e2e.mjs",
     "test:scoring": "node scripts/verify-scoring.mjs",
     "test:csv": "node scripts/verify-milestone2.mjs",
-    "test:supabase": "node scripts/verify-supabase.mjs"
+    "test:supabase": "node scripts/verify-supabase.mjs",
+    "test:e2e": "node scripts/verify-scalability-and-e2e.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.117.3",

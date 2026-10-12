@@ -21,38 +21,63 @@ import {
   StudentDetailModal 
 } from './components/dashboard/StudentDetailModal';
 import { 
+  StudentPortalTab 
+} from './components/dashboard/StudentPortalTab';
+import { 
+  DemoUsersTab 
+} from './components/dashboard/DemoUsersTab';
+import { 
+  LoginView 
+} from './components/auth/LoginView';
+import { 
   LoadingState 
 } from './components/common/LoadingState';
 import { 
   ErrorState 
 } from './components/common/ErrorState';
 import { 
-  SYNTHETIC_STUDENTS 
+  SYNTHETIC_STUDENTS,
+  DEMO_IDENTITIES,
+  DEFAULT_DEMO_IDENTITY,
+  TEACHER_ASSIGNED_CLASS
 } from './data/syntheticStudents';
 import { 
   NavTab, 
   Student,
   DatasetSource,
-  SupabaseConnectionStatus 
+  SupabaseConnectionStatus,
+  UserRole,
+  UserProfile,
+  DemoIdentity
 } from './types/student';
 import { 
   RotateCw, 
   Sparkles, 
   ShieldCheck, 
-  Info,
-  Bug,
-  RotateCcw,
-  Database,
-  RefreshCw
+  Info, 
+  Bug, 
+  RotateCcw, 
+  Database, 
+  RefreshCw, 
+  UserCheck 
 } from 'lucide-react';
 import {
   checkSupabaseConnection,
   fetchStudentsFromSupabase,
-  replaceCohortInSupabase
+  replaceCohortInSupabase,
+  updateStudentMarksInSupabase
 } from './services/studentService';
 import {
-  isSupabaseConfigured
+  isSupabaseConfigured,
+  getSupabaseClient
 } from './services/supabaseClient';
+import {
+  fetchUserProfile,
+  signOutUser
+} from './services/authService';
+import {
+  calculateStudentSuccessScore
+} from './utils/scoringEngine';
 
 export const App: React.FC = () => {
   const [currentTab, setCurrentTab] = useState<NavTab>('overview');
@@ -60,6 +85,14 @@ export const App: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedDepartment, setSelectedDepartment] = useState('ALL');
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
+
+  // Preconfigured Demo Identity State (Stage 3 Hackathon Demo System)
+  const [currentDemoIdentity, setCurrentDemoIdentity] = useState<DemoIdentity>(DEFAULT_DEMO_IDENTITY);
+
+  // Authentication & RBAC State
+  const [currentUserRole, setCurrentUserRole] = useState<UserRole>('admin');
+  const [currentUserProfile, setCurrentUserProfile] = useState<UserProfile | null>(null);
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(!isSupabaseConfigured());
 
   // Active Cohort State (Single Source of Truth)
   const [activeStudents, setActiveStudents] = useState<Student[]>(SYNTHETIC_STUDENTS);
@@ -71,19 +104,28 @@ export const App: React.FC = () => {
   const [supabaseMessage, setSupabaseMessage] = useState<string>('');
   const [supabaseRecordCount, setSupabaseRecordCount] = useState<number | null>(null);
 
-  // States to demonstrate loading & error handling without artificial bugs
+  // Loading & Error States
   const [isLoading, setIsLoading] = useState(false);
   const [hasError, setHasError] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
 
-  // Extract distinct departments from currently active dataset
-  const departments = useMemo(() => {
-    return Array.from(new Set(activeStudents.map(s => s.department))).sort();
-  }, [activeStudents]);
+  // Effective cohort scoping based on active role & demo identity:
+  // When teacher role is active, teachers are scoped to their assigned class section (CS-301)
+  const effectiveCohort = useMemo(() => {
+    if (currentUserRole === 'teacher' && datasetSource === 'Synthetic Demo') {
+      return activeStudents.filter(s => TEACHER_ASSIGNED_CLASS.studentIds.includes(s.studentId));
+    }
+    return activeStudents;
+  }, [activeStudents, currentUserRole, datasetSource]);
 
-  // Filter students by current global search and department
+  // Extract distinct departments from effective cohort
+  const departments = useMemo(() => {
+    return Array.from(new Set(effectiveCohort.map(s => s.department))).sort();
+  }, [effectiveCohort]);
+
+  // Filter students by current search and department
   const filteredStudents = useMemo(() => {
-    return activeStudents.filter(s => {
+    return effectiveCohort.filter(s => {
       const matchesSearch = 
         s.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
         s.studentId.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -94,7 +136,37 @@ export const App: React.FC = () => {
 
       return matchesSearch && matchesDept;
     });
-  }, [activeStudents, searchQuery, selectedDepartment]);
+  }, [effectiveCohort, searchQuery, selectedDepartment]);
+
+  // Resolve active student record for the Student Academic Portal
+  const currentStudentForPortal = useMemo(() => {
+    if (currentDemoIdentity.assignedStudentId) {
+      const matched = activeStudents.find(s => s.studentId === currentDemoIdentity.assignedStudentId);
+      if (matched) return matched;
+    }
+    return activeStudents[0];
+  }, [activeStudents, currentDemoIdentity]);
+
+  // Handle Demo Identity change logic (Stage 2 & 3)
+  const handleSelectDemoIdentity = (identity: DemoIdentity) => {
+    setCurrentDemoIdentity(identity);
+    setCurrentUserRole(identity.role);
+    setSelectedDepartment('ALL');
+    setSearchQuery('');
+    setHasError(false);
+
+    if (identity.role === 'student') {
+      setCurrentTab('student-portal');
+    } else if (currentTab === 'student-portal') {
+      setCurrentTab('overview');
+    }
+  };
+
+  // Handle role switcher button click (maps directly to preconfigured persona)
+  const handleSelectRole = (role: UserRole) => {
+    const targetIdentity = DEMO_IDENTITIES.find(i => i.role === role) || DEFAULT_DEMO_IDENTITY;
+    handleSelectDemoIdentity(targetIdentity);
+  };
 
   // Initial Supabase connection check & safe auto-load
   const checkAndLoadSupabase = useCallback(async (attemptAutoLoad = true) => {
@@ -132,8 +204,54 @@ export const App: React.FC = () => {
     }
   }, []);
 
+  // Supabase Auth session detection & reactive state listener (Stage 5)
   useEffect(() => {
     checkAndLoadSupabase(true);
+
+    if (isSupabaseConfigured()) {
+      const client = getSupabaseClient();
+      if (client) {
+        // Initial session check
+        client.auth.getSession().then(({ data }) => {
+          if (data?.session?.user) {
+            setIsAuthenticated(true);
+            fetchUserProfile(data.session.user.id).then(res => {
+              if (res.profile) {
+                setCurrentUserProfile(res.profile);
+                setCurrentUserRole(res.profile.role);
+                if (res.profile.role === 'student') {
+                  setCurrentTab('student-portal');
+                }
+              }
+            });
+          }
+        });
+
+        // Reactive Auth State Change Subscription
+        const { data: authListener } = client.auth.onAuthStateChange(async (event, session) => {
+          if (session?.user) {
+            setIsAuthenticated(true);
+            const res = await fetchUserProfile(session.user.id);
+            if (res.profile) {
+              setCurrentUserProfile(res.profile);
+              setCurrentUserRole(res.profile.role);
+              if (res.profile.role === 'student') {
+                setCurrentTab('student-portal');
+              }
+            }
+          } else if (event === 'SIGNED_OUT') {
+            setIsAuthenticated(false);
+            setCurrentUserProfile(null);
+            setCurrentUserRole('admin');
+            setCurrentTab('overview');
+          }
+        });
+
+        return () => {
+          authListener?.subscription?.unsubscribe();
+        };
+      }
+    }
   }, [checkAndLoadSupabase]);
 
   // Load from Supabase on demand
@@ -148,6 +266,7 @@ export const App: React.FC = () => {
       setErrorMessage(`Failed to load cohort from Supabase: ${res.error}`);
       return;
     }
+
     if (res.data.length === 0) {
       setHasError(true);
       setErrorMessage('The public.students table in Supabase is currently empty. Upload a verified CSV to populate records.');
@@ -162,12 +281,16 @@ export const App: React.FC = () => {
     setSearchQuery('');
   };
 
-  // Apply imported CSV student dataset
+  // Apply imported CSV student dataset (Admin only)
   const handleApplyImport = async (
     importedStudents: Student[],
     fileName: string,
     saveToSupabase: boolean = false
   ): Promise<{ success: boolean; error?: string | null }> => {
+    if (currentUserRole !== 'admin') {
+      return { success: false, error: 'Unauthorized: Only institutional Administrators can import cohorts.' };
+    }
+
     if (saveToSupabase && isSupabaseConfigured()) {
       setIsLoading(true);
       const saveRes = await replaceCohortInSupabase(importedStudents);
@@ -197,6 +320,65 @@ export const App: React.FC = () => {
     return { success: true };
   };
 
+  // Teacher / Admin mark modification with audited parity calculation
+  const handleSaveMarks = async (
+    studentId: string,
+    attendance: number,
+    assignment: number
+  ): Promise<{ success: boolean; error?: string | null }> => {
+    if (currentUserRole !== 'teacher' && currentUserRole !== 'admin') {
+      return { success: false, error: 'Unauthorized: Students cannot modify marks.' };
+    }
+
+    // If active dataset is live Supabase, call audited RPC
+    if (datasetSource === 'Supabase DB' && isSupabaseConfigured()) {
+      const res = await updateStudentMarksInSupabase(studentId, attendance, assignment);
+      if (!res.success) {
+        return { success: false, error: res.error };
+      }
+    }
+
+    // Update state and recalculate exact scoring metrics via deterministic engine
+    const updater = (s: Student): Student => {
+      if (s.studentId !== studentId) return s;
+      const updatedScores = calculateStudentSuccessScore({
+        cgpa: s.cgpa,
+        attendanceRate: attendance,
+        assignmentScore: assignment,
+        engagementScore: s.engagementScore,
+        technicalSkillsRating: s.technicalSkillsRating,
+        placementReadinessScore: s.placementReadinessScore,
+      });
+
+      return {
+        ...s,
+        attendanceRate: attendance,
+        assignmentScore: assignment,
+        successScore: updatedScores.successScore,
+        academicRisk: updatedScores.academicRisk,
+        placementRisk: updatedScores.placementRisk,
+        scoreBreakdown: updatedScores.scoreBreakdown,
+        hasInsufficientData: updatedScores.hasInsufficientData,
+        incompleteReasons: updatedScores.incompleteReasons,
+        lastUpdated: new Date().toISOString(),
+      };
+    };
+
+    setActiveStudents(prev => prev.map(updater));
+    setSelectedStudent(prev => (prev ? updater(prev) : null));
+
+    return { success: true };
+  };
+
+  // Sign out handler
+  const handleSignOut = async () => {
+    await signOutUser();
+    setIsAuthenticated(false);
+    setCurrentUserProfile(null);
+    handleSelectDemoIdentity(DEFAULT_DEMO_IDENTITY);
+    setCurrentTab('overview');
+  };
+
   // Restore synthetic demo dataset (preserves Supabase database records)
   const handleRestoreSyntheticDemo = () => {
     setActiveStudents(SYNTHETIC_STUDENTS);
@@ -213,10 +395,10 @@ export const App: React.FC = () => {
     setHasError(false);
     setTimeout(() => {
       setIsLoading(false);
-    }, 500);
+    }, 400);
   };
 
-  // Simulate error state trigger for verification
+  // Error simulation toggle
   const handleTriggerErrorSimulation = () => {
     setHasError(true);
     setErrorMessage('Simulated API gateway error: Dataset verification interrupted. Click retry to recover.');
@@ -227,6 +409,42 @@ export const App: React.FC = () => {
     setErrorMessage('');
     setIsLoading(false);
   };
+
+  // Render Login view if Supabase is configured and user is not authenticated
+  if (isSupabaseConfigured() && !isAuthenticated) {
+    return (
+      <LoginView
+        onSuccess={async () => {
+          setIsAuthenticated(true);
+          const client = getSupabaseClient();
+          if (client) {
+            const { data } = await client.auth.getUser();
+            if (data?.user) {
+              const profileRes = await fetchUserProfile(data.user.id);
+              if (profileRes.profile) {
+                setCurrentUserProfile(profileRes.profile);
+                setCurrentUserRole(profileRes.profile.role);
+                if (profileRes.profile.role === 'student') {
+                  setCurrentTab('student-portal');
+                }
+              }
+            }
+          }
+        }}
+        onEnterDemoMode={(demoRole) => {
+          const role = demoRole || 'admin';
+          const identity = DEMO_IDENTITIES.find(i => i.role === role) || DEFAULT_DEMO_IDENTITY;
+          handleSelectDemoIdentity(identity);
+          setIsAuthenticated(true);
+        }}
+        isSupabaseConnected={supabaseStatus === 'connected'}
+      />
+    );
+  }
+
+  // Current display email & name
+  const displayEmail = currentUserProfile?.email || currentDemoIdentity.email;
+  const displayName = currentUserProfile?.fullName || currentDemoIdentity.name;
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col antialiased">
@@ -239,6 +457,9 @@ export const App: React.FC = () => {
         }}
         mobileOpen={mobileMenuOpen}
         onCloseMobile={() => setMobileMenuOpen(false)}
+        userRole={currentUserRole}
+        currentIdentityName={displayName}
+        currentIdentityScope={currentDemoIdentity.assignedScope}
       />
 
       {/* Main Content Area */}
@@ -253,11 +474,17 @@ export const App: React.FC = () => {
           selectedDepartment={selectedDepartment}
           onDepartmentChange={setSelectedDepartment}
           departments={departments}
+          userRole={currentUserRole}
+          userEmail={displayEmail}
+          userName={displayName}
+          isDemoSession={datasetSource === 'Synthetic Demo'}
+          onSignOut={handleSignOut}
+          onOpenDemoUsers={() => setCurrentTab('demo-users')}
         />
 
-        {/* Unified Dataset & Sandbox Toolbar */}
+        {/* Unified Dataset & Persona Toolbar */}
         <div className="bg-slate-100/90 border-b border-slate-200 px-4 sm:px-6 lg:px-8 py-1.5 flex flex-wrap items-center justify-between text-[11px] text-slate-500 gap-2">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center flex-wrap gap-2">
             <span className="font-semibold text-slate-700 flex items-center gap-1">
               <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
               Active Dataset:
@@ -269,7 +496,7 @@ export const App: React.FC = () => {
                 ? 'bg-indigo-50 text-indigo-800 border-indigo-200'
                 : 'bg-emerald-50 text-emerald-800 border-emerald-200'
             }`}>
-              {datasetSource} • {activeStudents.length} Students {importedFileName ? `(${importedFileName})` : ''}
+              {datasetSource} • {effectiveCohort.length} {currentUserRole === 'teacher' ? 'Assigned' : 'Total'} Students {importedFileName ? `(${importedFileName})` : ''}
             </span>
 
             {/* Supabase Connection Status Badge */}
@@ -294,11 +521,45 @@ export const App: React.FC = () => {
               </span>
             </span>
 
+            {/* Role Switcher Toolbar for Reviewers & Testing */}
+            <div className="flex items-center gap-1 bg-white p-0.5 rounded-md border border-slate-200 shadow-2xs">
+              <span className="px-1.5 text-slate-500 font-semibold flex items-center gap-1">
+                <UserCheck className="w-3 h-3 text-indigo-600" />
+                Role:
+              </span>
+              {(['admin', 'teacher', 'student'] as UserRole[]).map((r) => (
+                <button
+                  key={r}
+                  onClick={() => handleSelectRole(r)}
+                  className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider transition-colors cursor-pointer ${
+                    currentUserRole === r
+                      ? 'bg-indigo-600 text-white shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                  }`}
+                  title={`Switch active view to ${r} persona`}
+                >
+                  {r}
+                </button>
+              ))}
+
+              <button
+                onClick={() => setCurrentTab('demo-users')}
+                className={`px-1.5 py-0.5 text-[10px] font-bold rounded transition-colors cursor-pointer ${
+                  currentTab === 'demo-users'
+                    ? 'bg-indigo-100 text-indigo-800'
+                    : 'text-indigo-600 hover:bg-indigo-50'
+                }`}
+                title="Manage all 4 preconfigured demo identities"
+              >
+                Personas
+              </button>
+            </div>
+
             {/* Load from DB button if DB is connected and active dataset is not DB */}
             {supabaseStatus === 'connected' && datasetSource !== 'Supabase DB' && (supabaseRecordCount ?? 0) > 0 && (
               <button
                 onClick={handleLoadFromSupabase}
-                className="inline-flex items-center gap-1 px-2 py-0.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded transition-colors"
+                className="inline-flex items-center gap-1 px-2 py-0.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded transition-colors cursor-pointer"
                 title="Load student cohort from Supabase database"
               >
                 <RefreshCw className="w-3 h-3 text-indigo-600" />
@@ -309,8 +570,8 @@ export const App: React.FC = () => {
             {datasetSource !== 'Synthetic Demo' && (
               <button
                 onClick={handleRestoreSyntheticDemo}
-                className="inline-flex items-center gap-1 px-2 py-0.5 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 rounded transition-colors"
-                title="Restore original 20-student synthetic demo cohort without touching database records"
+                className="inline-flex items-center gap-1 px-2 py-0.5 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 rounded transition-colors cursor-pointer"
+                title="Restore original 20-student synthetic demo cohort"
               >
                 <RotateCcw className="w-3 h-3 text-indigo-600" />
                 <span>Restore Demo</span>
@@ -321,7 +582,7 @@ export const App: React.FC = () => {
           <div className="flex items-center gap-2">
             <button
               onClick={() => checkAndLoadSupabase(false)}
-              className="inline-flex items-center gap-1 px-2 py-0.5 bg-white hover:bg-slate-50 border border-slate-200 rounded text-slate-700 hover:text-slate-900 transition-colors"
+              className="inline-flex items-center gap-1 px-2 py-0.5 bg-white hover:bg-slate-50 border border-slate-200 rounded text-slate-700 hover:text-slate-900 transition-colors cursor-pointer"
               title="Test live Supabase connection"
             >
               <RefreshCw className="w-3 h-3 text-indigo-600" />
@@ -329,15 +590,15 @@ export const App: React.FC = () => {
             </button>
             <button
               onClick={handleSimulateReload}
-              className="inline-flex items-center gap-1 px-2 py-0.5 bg-white hover:bg-slate-50 border border-slate-200 rounded text-slate-700 hover:text-slate-900 transition-colors"
+              className="inline-flex items-center gap-1 px-2 py-0.5 bg-white hover:bg-slate-50 border border-slate-200 rounded text-slate-700 hover:text-slate-900 transition-colors cursor-pointer"
               title="Test smooth loading animation"
             >
               <RotateCw className="w-3 h-3 text-indigo-600" />
-              <span>Simulate Refresh</span>
+              <span>Refresh</span>
             </button>
             <button
               onClick={hasError ? handleResetError : handleTriggerErrorSimulation}
-              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded border transition-colors ${
+              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded border transition-colors cursor-pointer ${
                 hasError 
                   ? 'bg-rose-600 text-white border-rose-600' 
                   : 'bg-white hover:bg-slate-50 border-slate-200 text-slate-700'
@@ -345,7 +606,7 @@ export const App: React.FC = () => {
               title="Toggle error state for testing"
             >
               <Bug className="w-3 h-3 text-amber-600" />
-              <span>{hasError ? 'Reset Error' : 'Test Error State'}</span>
+              <span>{hasError ? 'Reset Error' : 'Test Error'}</span>
             </button>
           </div>
         </div>
@@ -365,6 +626,12 @@ export const App: React.FC = () => {
             />
           ) : (
             <>
+              {currentTab === 'student-portal' && (
+                <StudentPortalTab
+                  student={currentStudentForPortal}
+                />
+              )}
+
               {currentTab === 'overview' && (
                 <OverviewTab
                   students={filteredStudents}
@@ -376,7 +643,7 @@ export const App: React.FC = () => {
 
               {currentTab === 'students' && (
                 <StudentsTab
-                  students={activeStudents}
+                  students={effectiveCohort}
                   onSelectStudent={setSelectedStudent}
                   searchQuery={searchQuery}
                   onSearchChange={setSearchQuery}
@@ -384,17 +651,22 @@ export const App: React.FC = () => {
                   onDepartmentChange={setSelectedDepartment}
                   departments={departments}
                   datasetSource={datasetSource}
+                  userRole={currentUserRole}
+                  assignedClassInfo={currentUserRole === 'teacher' ? {
+                    ...TEACHER_ASSIGNED_CLASS,
+                    studentCount: effectiveCohort.length
+                  } : undefined}
                 />
               )}
 
               {currentTab === 'analytics' && (
                 <AnalyticsTab
-                  students={filteredStudents.length > 0 ? filteredStudents : activeStudents}
+                  students={filteredStudents.length > 0 ? filteredStudents : effectiveCohort}
                   datasetSource={datasetSource}
                 />
               )}
 
-              {currentTab === 'data-import' && (
+              {currentTab === 'data-import' && currentUserRole === 'admin' && (
                 <DataImportTab 
                   onApplyImport={handleApplyImport}
                   datasetSource={datasetSource}
@@ -404,6 +676,14 @@ export const App: React.FC = () => {
                   supabaseConnected={supabaseStatus === 'connected'}
                   supabaseMessage={supabaseMessage}
                   onRefreshFromSupabase={handleLoadFromSupabase}
+                />
+              )}
+
+              {currentTab === 'demo-users' && (
+                <DemoUsersTab 
+                  currentIdentityId={currentDemoIdentity.id}
+                  onSelectIdentity={handleSelectDemoIdentity}
+                  onResetDemoData={handleRestoreSyntheticDemo}
                 />
               )}
             </>
@@ -418,15 +698,15 @@ export const App: React.FC = () => {
               <span className="font-semibold text-slate-700">EduPulse AI</span>
               <span>— Student Success Platform</span>
               <span className="hidden md:inline text-slate-300">•</span>
-              <span className="hidden md:inline">KPMG in India Hackathon Challenge</span>
+              <span className="hidden md:inline">KPMG Hackathon Challenge</span>
             </div>
 
             <div className="flex items-center gap-4 text-[11px] text-slate-400">
               <span className="flex items-center gap-1 text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
                 <Info className="w-3 h-3" />
-                Illustrative scoring methodology • Non-clinical AI
+                Deterministic Scoring • Synthetic Data • Safe Local Demo
               </span>
-              <span>Milestone 3: Supabase Ready</span>
+              <span>Hackathon Prototype v0.1</span>
             </div>
           </div>
         </footer>
@@ -436,6 +716,9 @@ export const App: React.FC = () => {
       <StudentDetailModal
         student={selectedStudent}
         onClose={() => setSelectedStudent(null)}
+        canEditMarks={currentUserRole === 'teacher' || currentUserRole === 'admin'}
+        isDemoMode={datasetSource !== 'Supabase DB' || !isSupabaseConfigured()}
+        onSaveMarks={handleSaveMarks}
       />
     </div>
   );

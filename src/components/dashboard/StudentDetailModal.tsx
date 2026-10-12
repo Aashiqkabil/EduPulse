@@ -11,19 +11,73 @@ import {
   ShieldAlert,
   MessageSquare,
   Activity,
-  Layers
+  Layers,
+  Check,
+  Edit3
 } from 'lucide-react';
 import { Student } from '../../types/student';
 import { SyntheticBadge } from '../common/SyntheticBadge';
-// Scoring engine utilities available for future use
 
 interface StudentDetailModalProps {
   student: Student | null;
   onClose: () => void;
+  canEditMarks?: boolean;
+  isDemoMode?: boolean;
+  onSaveMarks?: (studentId: string, attendance: number, assignment: number) => Promise<{ success: boolean; error?: string | null }>;
 }
 
-export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({ student, onClose }) => {
+export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({
+  student,
+  onClose,
+  canEditMarks = false,
+  isDemoMode = true,
+  onSaveMarks,
+}) => {
   if (!student) return null;
+
+  const [isEditing, setIsEditing] = React.useState(false);
+  const [attendanceInput, setAttendanceInput] = React.useState(student.attendanceRate);
+  const [assignmentInput, setAssignmentInput] = React.useState(student.assignmentScore);
+  const [isSaving, setIsSaving] = React.useState(false);
+  const [editError, setEditError] = React.useState<string | null>(null);
+  const [editSuccess, setEditSuccess] = React.useState(false);
+
+  React.useEffect(() => {
+    setAttendanceInput(student.attendanceRate);
+    setAssignmentInput(student.assignmentScore);
+    setIsEditing(false);
+    setEditError(null);
+    setEditSuccess(false);
+  }, [student]);
+
+  const handleSave = async () => {
+    if (!onSaveMarks) return;
+    setEditError(null);
+
+    const att = Number(attendanceInput);
+    const assign = Number(assignmentInput);
+
+    if (isNaN(att) || att < 0 || att > 100) {
+      setEditError('Attendance rate must be a valid percentage between 0 and 100.');
+      return;
+    }
+    if (isNaN(assign) || assign < 0 || assign > 100) {
+      setEditError('Assignment score must be a valid percentage between 0 and 100.');
+      return;
+    }
+
+    setIsSaving(true);
+    const result = await onSaveMarks(student.studentId, att, assign);
+    setIsSaving(false);
+
+    if (result.success) {
+      setEditSuccess(true);
+      setIsEditing(false);
+      setTimeout(() => setEditSuccess(false), 3000);
+    } else {
+      setEditError(result.error || 'Failed to update marks.');
+    }
+  };
 
   const getRiskBadge = (level: string) => {
     switch (level) {
@@ -273,6 +327,97 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({ student,
             </div>
           )}
 
+          {/* Teacher Mark Update Panel (Visible to authorized Faculty / Admins) */}
+          {canEditMarks && (
+            <div className="p-4 bg-gradient-to-r from-indigo-50/70 to-slate-50 border border-indigo-100 rounded-xl space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-indigo-950 flex items-center gap-1.5">
+                  <Edit3 className="w-4 h-4 text-indigo-600" />
+                  <span>Authorized Faculty Marks Entry</span>
+                </span>
+                {!isEditing ? (
+                  <button
+                    type="button"
+                    onClick={() => setIsEditing(true)}
+                    className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-semibold rounded-lg shadow-xs transition-colors"
+                  >
+                    Edit Marks & Attendance
+                  </button>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={isSaving}
+                      onClick={() => setIsEditing(false)}
+                      className="px-2 py-1 bg-slate-200 hover:bg-slate-300 text-slate-700 text-[11px] font-semibold rounded-lg transition-colors"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isSaving}
+                      onClick={handleSave}
+                      className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-semibold rounded-lg shadow-xs transition-colors flex items-center gap-1 cursor-pointer"
+                    >
+                      <Check className="w-3.5 h-3.5" />
+                      <span>{isSaving ? 'Saving...' : isDemoMode ? 'Save & Recalculate' : 'Save via Audited RPC'}</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {isEditing ? (
+                <div className="grid grid-cols-2 gap-3 pt-1">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                      Attendance Rate (%)
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="0.1"
+                      value={attendanceInput}
+                      onChange={(e) => setAttendanceInput(Number(e.target.value))}
+                      className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                      LMS Assignment Score (%)
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="0.1"
+                      value={assignmentInput}
+                      onChange={(e) => setAssignmentInput(Number(e.target.value))}
+                      className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                  </div>
+                </div>
+              ) : (
+                <p className="text-[11px] text-slate-500 leading-normal">
+                  Teachers are authorized to modify <strong className="text-slate-700">Attendance Rate</strong> and <strong className="text-slate-700">Assignment Score</strong> for assigned class sections. All modifications are permanently recorded in the system audit log.
+                </p>
+              )}
+
+              {editError && (
+                <div className="p-2 bg-rose-100 border border-rose-200 rounded-lg text-rose-800 text-[11px]">
+                  {editError}
+                </div>
+              )}
+              {editSuccess && (
+                <div className="p-2 bg-emerald-100 border border-emerald-200 rounded-lg text-emerald-800 text-[11px]">
+                  {isDemoMode
+                    ? 'Marks updated successfully and recalculated via scoring engine (Demo session).'
+                    : 'Marks updated successfully and committed to database audit logs.'}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Details Metadata */}
           <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs text-slate-600 flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2">
@@ -298,7 +443,7 @@ export const StudentDetailModal: React.FC<StudentDetailModalProps> = ({ student,
           </div>
           <button
             onClick={onClose}
-            className="px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white text-xs font-semibold rounded-lg shadow-sm transition-colors"
+            className="px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white text-xs font-semibold rounded-lg shadow-sm transition-colors cursor-pointer"
           >
             Close Profile
           </button>

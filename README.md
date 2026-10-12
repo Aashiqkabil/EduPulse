@@ -190,12 +190,14 @@ npm.cmd test
 | **Suite 21** | Disk Fixture E2E Validation (`valid`, `invalid`, `empty`, `mixed`) | 20 | **PASS** |
 | **Suite 22** | Sample CSV Template Generator & Re-parse Compatibility | 10 | **PASS** |
 | **Suite 23** | Dashboard KPI Calculations, Filtering & Modal Score Breakdown | 16 | **PASS** |
-| **Total Automated Tests** | **Full Verification Suite** | **205** | **205 PASS, 0 FAIL** |
+| **Suite S1–S4** | Supabase Migration, RLS, Mapping & Security Suite | 40 | **PASS** |
+| **Suite E1–E7** | Cohort Scalability (20, 21, 100, 500, 1000), Pagination & E2E | 63 | **PASS** |
+| **Total Automated Tests** | **Full Verification Suite** | **308** | **308 PASS, 0 FAIL** |
 
 ### Build & Type Safety Verification
 
 - **TypeScript Typecheck (`tsc --noEmit`)**: Completed with **0 errors**.
-- **Production Build (`tsc && vite build`)**: Completed successfully with **0 errors** in 10.55s.
+- **Production Build (`tsc && vite build`)**: Completed successfully with **0 errors** (built in 12.98s).
 
 ---
 

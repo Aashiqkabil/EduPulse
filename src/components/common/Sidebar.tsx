@@ -8,6 +8,7 @@ import {
   Activity, 
   Sparkles,
   ShieldCheck,
+  UserCheck,
   X
 } from 'lucide-react';
 import { NavTab } from '../../types/student';
@@ -17,6 +18,9 @@ interface SidebarProps {
   onSelectTab: (tab: NavTab) => void;
   mobileOpen: boolean;
   onCloseMobile: () => void;
+  userRole?: string;
+  currentIdentityName?: string;
+  currentIdentityScope?: string;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -24,8 +28,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onSelectTab,
   mobileOpen,
   onCloseMobile,
+  userRole = 'admin',
+  currentIdentityName,
+  currentIdentityScope,
 }) => {
-  const navItems = [
+  const allNavItems = [
     {
       id: 'overview' as NavTab,
       label: 'Overview',
@@ -38,7 +45,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       label: 'Students',
       icon: Users,
       description: 'Directory & individual profiles',
-      badge: '20'
+      badge: 'Cohort'
     },
     {
       id: 'analytics' as NavTab,
@@ -52,9 +59,39 @@ export const Sidebar: React.FC<SidebarProps> = ({
       label: 'Data Import',
       icon: UploadCloud,
       description: 'CSV Ingestion & Validation',
-      badge: 'CSV'
+      badge: 'Admin'
+    },
+    {
+      id: 'demo-users' as NavTab,
+      label: 'Demo Users',
+      icon: UserCheck,
+      description: 'Persona switcher & permissions',
+      badge: 'Personas'
     },
   ];
+
+  // If role is student, only provide Student Academic Portal navigation
+  // If teacher, provide Overview, Students, Analytics
+  // If admin, provide all tabs including Data Import and Demo Users
+  const navItems = userRole === 'student'
+    ? [
+        {
+          id: 'student-portal' as NavTab,
+          label: 'Academic Portal',
+          icon: GraduationCap,
+          description: 'Personal records & action plan',
+          badge: 'Student'
+        }
+      ]
+    : allNavItems.filter((item) => {
+        if (item.id === 'data-import' && userRole !== 'admin') {
+          return false;
+        }
+        if (item.id === 'demo-users' && userRole !== 'admin') {
+          return false;
+        }
+        return true;
+      });
 
   const handleNavClick = (tab: NavTab) => {
     onSelectTab(tab);
@@ -94,7 +131,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
           <button
             onClick={onCloseMobile}
-            className="lg:hidden p-1.5 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100"
+            className="lg:hidden p-1.5 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 cursor-pointer"
           >
             <X className="w-5 h-5" />
           </button>
@@ -107,7 +144,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <span className="text-xs font-semibold text-indigo-900">KPMG Hackathon Challenge</span>
           </div>
           <p className="mt-1 text-[11px] text-indigo-700/90 leading-relaxed">
-            AI-Powered Student Analytics and Success Platform — Prototype v0.1
+            AI-Powered Student Analytics and Success Platform — Prototype Demo
           </p>
         </div>
 
@@ -123,7 +160,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <button
                 key={item.id}
                 onClick={() => handleNavClick(item.id)}
-                className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-150 text-left ${
+                className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-150 text-left cursor-pointer ${
                   isActive
                     ? 'bg-indigo-600 text-white shadow-sm shadow-indigo-200'
                     : 'text-slate-600 hover:bg-slate-100/80 hover:text-slate-900'
@@ -154,19 +191,42 @@ export const Sidebar: React.FC<SidebarProps> = ({
           })}
         </div>
 
-        {/* Sidebar Footer */}
+        {/* Sidebar Footer with Active Persona Card */}
         <div className="p-4 border-t border-slate-100 bg-slate-50/50">
           <div className="p-3 bg-white rounded-xl border border-slate-200/70 shadow-2xs">
-            <div className="flex items-center gap-2">
-              <ShieldCheck className="w-4 h-4 text-emerald-600" />
-              <span className="text-xs font-semibold text-slate-800">Milestone 2 Active</span>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5">
+                <ShieldCheck className="w-4 h-4 text-emerald-600" />
+                <span className="text-xs font-bold text-slate-800">Demo Persona</span>
+              </div>
+              <span className={`px-2 py-0.2 rounded-full text-[10px] font-bold uppercase ${
+                userRole === 'admin'
+                  ? 'bg-purple-100 text-purple-700'
+                  : userRole === 'teacher'
+                  ? 'bg-emerald-100 text-emerald-700'
+                  : 'bg-sky-100 text-sky-700'
+              }`}>
+                {userRole}
+              </span>
             </div>
-            <p className="mt-1 text-[11px] text-slate-500 leading-normal">
-              Explainable Student Scoring & CSV Ingestion Engine active.
-            </p>
-            <div className="mt-2.5 flex items-center gap-1.5 text-[11px] text-slate-400 font-mono">
-              <Activity className="w-3.5 h-3.5 text-emerald-500" />
-              <span>Status: Local Offline Ready</span>
+            
+            {currentIdentityName && (
+              <p className="mt-1 text-xs font-semibold text-slate-900 truncate" title={currentIdentityName}>
+                {currentIdentityName}
+              </p>
+            )}
+            {currentIdentityScope && (
+              <p className="mt-0.5 text-[11px] text-slate-500 truncate" title={currentIdentityScope}>
+                {currentIdentityScope}
+              </p>
+            )}
+
+            <div className="mt-2 pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-400 font-mono">
+              <span className="flex items-center gap-1 text-emerald-600 font-semibold">
+                <Activity className="w-3 h-3 text-emerald-500" />
+                Demo Mode
+              </span>
+              <span>Local Sandbox</span>
             </div>
           </div>
         </div>

@@ -5,7 +5,9 @@ import {
   SlidersHorizontal, 
   CheckCircle, 
   ExternalLink,
-  RotateCcw
+  RotateCcw,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react';
 import { Student } from '../../types/student';
 import { EmptyState } from '../common/EmptyState';
@@ -20,6 +22,15 @@ interface StudentsTabProps {
   onDepartmentChange: (dept: string) => void;
   departments: string[];
   datasetSource: string;
+  userRole?: string;
+  assignedClassInfo?: {
+    code: string;
+    name: string;
+    department: string;
+    semester: number;
+    section: string;
+    studentCount: number;
+  };
 }
 
 type SortField = 'studentId' | 'name' | 'cgpa' | 'attendanceRate' | 'successScore';
@@ -33,12 +44,18 @@ export const StudentsTab: React.FC<StudentsTabProps> = ({
   selectedDepartment,
   onDepartmentChange,
   departments,
-  datasetSource
+  datasetSource,
+  userRole,
+  assignedClassInfo,
 }) => {
   const [academicRiskFilter, setAcademicRiskFilter] = useState<string>('ALL');
   const [placementRiskFilter, setPlacementRiskFilter] = useState<string>('ALL');
   const [sortField, setSortField] = useState<SortField>('studentId');
   const [sortOrder, setSortOrder] = useState<SortOrder>('asc');
+
+  // Pagination state (default: 25 per page for high performance with 100, 500, 1000+ students)
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [pageSize, setPageSize] = useState<number | 'ALL'>(25);
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -47,6 +64,7 @@ export const StudentsTab: React.FC<StudentsTabProps> = ({
       setSortField(field);
       setSortOrder(field === 'name' || field === 'studentId' ? 'asc' : 'desc');
     }
+    setCurrentPage(1);
   };
 
   const filteredStudents = useMemo(() => {
@@ -89,11 +107,28 @@ export const StudentsTab: React.FC<StudentsTabProps> = ({
     });
   }, [students, searchQuery, selectedDepartment, academicRiskFilter, placementRiskFilter, sortField, sortOrder]);
 
+  // Reset pagination to page 1 whenever filters change
+  React.useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, selectedDepartment, academicRiskFilter, placementRiskFilter]);
+
+  const totalFiltered = filteredStudents.length;
+  const effectivePageSize = pageSize === 'ALL' ? totalFiltered : pageSize;
+  const totalPages = pageSize === 'ALL' || totalFiltered === 0 ? 1 : Math.ceil(totalFiltered / effectivePageSize);
+  const activePage = Math.min(Math.max(currentPage, 1), totalPages);
+
+  const displayedStudents = useMemo(() => {
+    if (pageSize === 'ALL') return filteredStudents;
+    const startIndex = (activePage - 1) * effectivePageSize;
+    return filteredStudents.slice(startIndex, startIndex + effectivePageSize);
+  }, [filteredStudents, pageSize, activePage, effectivePageSize]);
+
   const handleResetFilters = () => {
     onSearchChange('');
     onDepartmentChange('ALL');
     setAcademicRiskFilter('ALL');
     setPlacementRiskFilter('ALL');
+    setCurrentPage(1);
   };
 
   const hasActiveFilters = 
@@ -104,6 +139,32 @@ export const StudentsTab: React.FC<StudentsTabProps> = ({
 
   return (
     <div className="space-y-5">
+      {/* Teacher Scoped Class Section Banner */}
+      {userRole === 'teacher' && assignedClassInfo && (
+        <div className="p-4 bg-gradient-to-r from-emerald-50 via-teal-50 to-slate-50 border border-emerald-200/90 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs shadow-xs">
+          <div className="flex items-center gap-3">
+            <div className="px-2.5 py-1.5 rounded-xl bg-emerald-600 text-white font-mono font-bold text-xs shadow-xs">
+              {assignedClassInfo.code}
+            </div>
+            <div>
+              <div className="font-extrabold text-sm text-emerald-950 flex items-center gap-2">
+                <span>{assignedClassInfo.name}</span>
+                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-200/60 text-emerald-800">
+                  Sec {assignedClassInfo.section}
+                </span>
+              </div>
+              <p className="text-[11px] text-emerald-700/90 mt-0.5">
+                {assignedClassInfo.department} • Semester {assignedClassInfo.semester} • <strong>{assignedClassInfo.studentCount} Assigned Students</strong>
+              </p>
+            </div>
+          </div>
+          <span className="px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 font-bold border border-emerald-200 text-[11px] flex items-center gap-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse" />
+            Teacher Scoped Cohort
+          </span>
+        </div>
+      )}
+
       {/* Top Filter Bar */}
       <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs space-y-3">
         <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3">
@@ -256,7 +317,7 @@ export const StudentsTab: React.FC<StudentsTabProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-slate-700">
-                {filteredStudents.map((student) => (
+                {displayedStudents.map((student) => (
                   <tr 
                     key={student.studentId}
                     onClick={() => onSelectStudent(student)}
@@ -362,14 +423,58 @@ export const StudentsTab: React.FC<StudentsTabProps> = ({
             </table>
           </div>
 
-          {/* Table Footer */}
-          <div className="p-4 bg-slate-50/50 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
+          {/* Table Footer with Pagination */}
+          <div className="p-4 bg-slate-50/50 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-500">
             <div className="flex items-center gap-2">
-              <CheckCircle className="w-4 h-4 text-emerald-500" />
-              <span>Active dataset records loaded ({filteredStudents.length} displayed)</span>
+              <CheckCircle className="w-4 h-4 text-emerald-500 flex-shrink-0" />
+              <span>
+                Showing <strong className="text-slate-800">{totalFiltered === 0 ? 0 : (activePage - 1) * effectivePageSize + 1}–{Math.min(activePage * effectivePageSize, totalFiltered)}</strong> of{' '}
+                <strong className="text-slate-800">{totalFiltered}</strong> filtered records ({students.length} total active cohort)
+              </span>
             </div>
-            <div className="text-[11px] text-slate-400">
-              Sorted by: <span className="font-semibold text-slate-600 uppercase">{sortField} ({sortOrder})</span>
+
+            {/* Pagination Controls */}
+            {totalPages > 1 && (
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                  disabled={activePage === 1}
+                  className="px-2.5 py-1 text-xs font-medium text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center gap-1"
+                >
+                  <ChevronLeft className="w-3.5 h-3.5" />
+                  <span>Prev</span>
+                </button>
+                <span className="px-2 py-1 text-xs text-slate-600 font-medium">
+                  Page <strong className="text-slate-900">{activePage}</strong> of <strong className="text-slate-900">{totalPages}</strong>
+                </span>
+                <button
+                  onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                  disabled={activePage === totalPages}
+                  className="px-2.5 py-1 text-xs font-medium text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center gap-1"
+                >
+                  <span>Next</span>
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+
+            {/* Page Size Selector */}
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] text-slate-400">Rows per page:</span>
+              <select
+                value={pageSize}
+                onChange={(e) => {
+                  const val = e.target.value === 'ALL' ? 'ALL' : Number(e.target.value);
+                  setPageSize(val);
+                  setCurrentPage(1);
+                }}
+                className="px-2 py-1 text-xs bg-white border border-slate-200 rounded-lg text-slate-700 font-medium focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              >
+                <option value={25}>25</option>
+                <option value={50}>50</option>
+                <option value={100}>100</option>
+                <option value="ALL">All ({totalFiltered})</option>
+              </select>
             </div>
           </div>
         </div>
