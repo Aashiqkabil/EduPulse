@@ -1,0 +1,6 @@
+studentId,name,email,department,semester,cgpa,attendanceRate,assignmentScore,engagementScore,technicalSkillsRating,placementReadinessScore,internshipCompleted,backlogs,feedback
+STU-VAL-001,Aarav Sharma,aarav.s@university.edu,Computer Science,6,9.20,96,94,92,4.8,92,TRUE,0,Top performer across algorithms and systems
+STU-VAL-002,Bhavna Patel,bhavna.p@university.edu,Data Science,6,6.10,68,65,60,3.2,55,FALSE,1,Moderate risk in both academic and placement
+STU-VAL-003,Chetan Kumar,chetan.k@university.edu,Electronics & Comm,6,4.60,55,50,45,2.4,42,FALSE,3,High academic risk needing immediate tutoring
+STU-VAL-004,Divya Nair,divya.n@university.edu,Information Technology,4,8.10,88,85,82,1.8,36,FALSE,0,Strong academic performance but high placement risk
+STU-VAL-005,Eshaan Verma,eshaan.v@university.edu,Mechanical Eng,8,7.40,82,78,76,3.6,74,TRUE,0,Steady performance with completed internship

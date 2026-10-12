@@ -1,5 +1,5 @@
 import Papa from 'papaparse';
-import { Student, RowValidationError, CsvValidationSummary } from '../types/student';
+import type { Student, RowValidationError, CsvValidationSummary } from '../types/student';
 import { calculateStudentSuccessScore } from './scoringEngine';
 
 export interface ExpectedColumnDef {

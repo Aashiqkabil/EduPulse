@@ -1,4 +1,4 @@
-import { RiskLevel, ScoreBreakdown } from '../types/student';
+import type { RiskLevel, ScoreBreakdown } from '../types/student';
 
 /**
  * Centrally configured scoring weights (must sum to 1.0)
@@ -93,8 +93,8 @@ export function classifyAcademicRisk(
   cgpa: number | null | undefined,
   attendanceRate: number | null | undefined
 ): RiskLevel {
-  if (cgpa === null || cgpa === undefined || isNaN(cgpa)) return 'Unknown';
-  if (attendanceRate === null || attendanceRate === undefined || isNaN(attendanceRate)) return 'Unknown';
+  if (cgpa === null || cgpa === undefined || isNaN(cgpa) || cgpa < 0 || cgpa > SCORING_SCALE_MAX.CGPA) return 'Unknown';
+  if (attendanceRate === null || attendanceRate === undefined || isNaN(attendanceRate) || attendanceRate < 0 || attendanceRate > 100) return 'Unknown';
 
   const cgpaPct = normalizeCgpa(cgpa);
   const attendance = clampPercentage(attendanceRate);
@@ -119,8 +119,8 @@ export function classifyPlacementRisk(
   placementReadiness: number | null | undefined,
   skillRating: number | null | undefined
 ): RiskLevel {
-  if (placementReadiness === null || placementReadiness === undefined || isNaN(placementReadiness)) return 'Unknown';
-  if (skillRating === null || skillRating === undefined || isNaN(skillRating)) return 'Unknown';
+  if (placementReadiness === null || placementReadiness === undefined || isNaN(placementReadiness) || placementReadiness < 0 || placementReadiness > 100) return 'Unknown';
+  if (skillRating === null || skillRating === undefined || isNaN(skillRating) || skillRating < 0 || skillRating > SCORING_SCALE_MAX.SKILL_RATING) return 'Unknown';
 
   const readiness = clampPercentage(placementReadiness);
   const skillPct = normalizeSkillRating(skillRating);

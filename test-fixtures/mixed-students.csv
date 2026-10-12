@@ -1,0 +1,4 @@
+studentId,name,email,department,semester,cgpa,attendanceRate,assignmentScore,engagementScore,technicalSkillsRating,placementReadinessScore,internshipCompleted,backlogs,feedback
+STU-MIX-001,Valid First,valid1@uni.edu,Computer Science,6,8.5,90,85,85,4.2,80,TRUE,0,Valid row 1
+STU-MIX-BAD,Invalid Middle,bad@uni.edu,Computer Science,6,15.0,90,85,85,4.2,80,TRUE,0,Invalid CGPA 15.0
+STU-MIX-002,Valid Second,valid2@uni.edu,Data Science,6,7.8,88,80,82,3.8,75,FALSE,0,Valid row 2

@@ -1,0 +1,12 @@
+studentId,name,email,department,semester,cgpa,attendanceRate,assignmentScore,engagementScore,technicalSkillsRating,placementReadinessScore,internshipCompleted,backlogs,feedback
+STU-ERR-001,Student One,one@university.edu,Computer Science,6,11.5,95,90,90,4.5,85,TRUE,0,CGPA exceeds 10.0 scale
+STU-ERR-002,Student Two,two@university.edu,Data Science,6,8.0,120,80,80,4.0,80,TRUE,0,Attendance exceeds 100%
+STU-ERR-003,Student Three,not-an-email,Electronics & Comm,6,7.5,85,80,80,3.5,75,FALSE,0,Malformed email without domain
+STU-ERR-004,Student Four,four@university.edu,Computer Science,9,8.5,90,85,85,4.0,80,TRUE,0,Semester 9 exceeds max semester 8
+STU-ERR-005,Student Five,five@university.edu,Mechanical Eng,6,7.0,80,75,70,6.0,70,TRUE,0,Technical skills 6.0 exceeds max 5.0
+STU-ERR-006,Student Six,six@university.edu,Information Technology,6,7.0,80,75,70,3.0,125,FALSE,0,Placement readiness 125 exceeds 100
+STU-ERR-007,Student Seven,seven@university.edu,Civil Eng,6,7.0,80,75,70,3.0,70,MAYBE,0,Invalid boolean for internship
+STU-ERR-008,Student Eight,eight@university.edu,Chemical Eng,6,7.0,80,75,70,3.0,70,TRUE,-2,Negative backlogs count
+STU-ERR-009,,nine@university.edu,Computer Science,6,8.0,85,80,80,4.0,80,TRUE,0,Missing student name
+STU-DUP-001,Duplicate First,dup1@university.edu,Data Science,6,8.0,85,80,80,4.0,80,TRUE,0,First duplicate record
+STU-DUP-001,Duplicate Second,dup2@university.edu,Data Science,6,7.5,80,75,75,3.5,75,FALSE,0,Second duplicate record

@@ -34,8 +34,8 @@ function clampPercentage(val) {
 }
 
 function classifyAcademicRisk(cgpa, attendanceRate) {
-  if (cgpa === null || cgpa === undefined || isNaN(cgpa)) return 'Unknown';
-  if (attendanceRate === null || attendanceRate === undefined || isNaN(attendanceRate)) return 'Unknown';
+  if (cgpa === null || cgpa === undefined || isNaN(cgpa) || cgpa < 0 || cgpa > 10.0) return 'Unknown';
+  if (attendanceRate === null || attendanceRate === undefined || isNaN(attendanceRate) || attendanceRate < 0 || attendanceRate > 100) return 'Unknown';
   const cgpaPct = normalizeCgpa(cgpa);
   const att = clampPercentage(attendanceRate);
   if (cgpaPct < 50 || att < 60) return 'High';
@@ -44,8 +44,8 @@ function classifyAcademicRisk(cgpa, attendanceRate) {
 }
 
 function classifyPlacementRisk(readiness, skill) {
-  if (readiness === null || readiness === undefined || isNaN(readiness)) return 'Unknown';
-  if (skill === null || skill === undefined || isNaN(skill)) return 'Unknown';
+  if (readiness === null || readiness === undefined || isNaN(readiness) || readiness < 0 || readiness > 100) return 'Unknown';
+  if (skill === null || skill === undefined || isNaN(skill) || skill < 0 || skill > 5.0) return 'Unknown';
   const readPct = clampPercentage(readiness);
   const skillPct = normalizeSkillRating(skill);
   if (readPct < 40 || skillPct < 40) return 'High';
@@ -152,6 +152,9 @@ assert(classifyAcademicRisk(6.0, 80) === 'Medium', 'Academic Medium Risk: CGPA 6
 assert(classifyAcademicRisk(8.0, 70) === 'Medium', 'Academic Medium Risk: Attendance 70% (< 75%)');
 assert(classifyAcademicRisk(8.5, 90) === 'Low', 'Academic Low Risk: CGPA 8.5 and Attendance 90%');
 assert(classifyAcademicRisk(null, 90) === 'Unknown', 'Academic Unknown Risk: Missing CGPA');
+assert(classifyAcademicRisk(11.5, 90) === 'Unknown', 'Academic Unknown Risk: Out-of-range CGPA (11.5) produces Unknown');
+assert(classifyAcademicRisk(-1.0, 90) === 'Unknown', 'Academic Unknown Risk: Negative CGPA (-1.0) produces Unknown');
+assert(classifyAcademicRisk(8.5, 120) === 'Unknown', 'Academic Unknown Risk: Out-of-range Attendance (120) produces Unknown');
 
 // Placement: High if Readiness < 40 OR Skill % < 40 (Skill < 2.0); Med if Readiness < 60 OR Skill % < 60 (Skill < 3.0); else Low
 assert(classifyPlacementRisk(35, 4.0) === 'High', 'Placement High Risk: Readiness 35 (< 40)');
@@ -160,6 +163,8 @@ assert(classifyPlacementRisk(55, 4.0) === 'Medium', 'Placement Medium Risk: Read
 assert(classifyPlacementRisk(85, 2.8) === 'Medium', 'Placement Medium Risk: Skill rating 2.8 (< 3.0)');
 assert(classifyPlacementRisk(80, 4.2) === 'Low', 'Placement Low Risk: Readiness 80 and Skill 4.2');
 assert(classifyPlacementRisk(80, null) === 'Unknown', 'Placement Unknown Risk: Missing Skill rating');
+assert(classifyPlacementRisk(115, 4.0) === 'Unknown', 'Placement Unknown Risk: Out-of-range Readiness (115) produces Unknown');
+assert(classifyPlacementRisk(80, 6.0) === 'Unknown', 'Placement Unknown Risk: Out-of-range Skill (6.0) produces Unknown');
 
 // TEST SUITE 4: Missing Data Policy
 console.log('\nTEST SUITE 4: Incomplete Records & Missing Data Policy');

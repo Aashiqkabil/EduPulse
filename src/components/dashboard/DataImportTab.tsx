@@ -10,7 +10,10 @@ import {
   ArrowRight,
   ShieldCheck,
   Eye,
-  FileCheck
+  FileCheck,
+  Database,
+  RefreshCw,
+  Loader2
 } from 'lucide-react';
 import { Student, CsvValidationSummary } from '../../types/student';
 import { 
@@ -22,17 +25,29 @@ import {
 import { SCORING_DISCLAIMER } from '../../utils/scoringEngine';
 
 interface DataImportTabProps {
-  onApplyImport: (importedStudents: Student[], fileName: string) => void;
+  onApplyImport: (
+    importedStudents: Student[],
+    fileName: string,
+    saveToSupabase: boolean
+  ) => Promise<{ success: boolean; error?: string | null }> | { success: boolean; error?: string | null };
   datasetSource: string;
   totalActiveStudents: number;
   onRestoreSyntheticDemo: () => void;
+  supabaseConfigured?: boolean;
+  supabaseConnected?: boolean;
+  supabaseMessage?: string;
+  onRefreshFromSupabase?: () => void;
 }
 
 export const DataImportTab: React.FC<DataImportTabProps> = ({
   onApplyImport,
   datasetSource,
   totalActiveStudents,
-  onRestoreSyntheticDemo
+  onRestoreSyntheticDemo,
+  supabaseConfigured = false,
+  supabaseConnected = false,
+  supabaseMessage = '',
+  onRefreshFromSupabase
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
@@ -42,6 +57,9 @@ export const DataImportTab: React.FC<DataImportTabProps> = ({
   const [errorDownloadSuccess, setErrorDownloadSuccess] = useState(false);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [importAppliedNotice, setImportAppliedNotice] = useState<string | null>(null);
+  const [saveToSupabase, setSaveToSupabase] = useState(supabaseConnected);
+  const [isApplying, setIsApplying] = useState(false);
+  const [applyErrorMessage, setApplyErrorMessage] = useState<string | null>(null);
 
   // Trigger file download helper
   const triggerDownload = (content: string, fileName: string) => {
@@ -108,17 +126,38 @@ export const DataImportTab: React.FC<DataImportTabProps> = ({
     }
   };
 
-  const handleConfirmApply = () => {
+  const handleConfirmApply = async () => {
     if (!validationSummary || validationSummary.validStudents.length === 0) return;
 
-    onApplyImport(validationSummary.validStudents, validationSummary.fileName);
-    setImportAppliedNotice(`Successfully loaded ${validationSummary.validStudents.length} verified student records into the platform from "${validationSummary.fileName}".`);
+    setIsApplying(true);
+    setApplyErrorMessage(null);
+
+    const targetSaveToDb = Boolean(saveToSupabase && supabaseConnected);
+    const result = await onApplyImport(
+      validationSummary.validStudents,
+      validationSummary.fileName,
+      targetSaveToDb
+    );
+
+    setIsApplying(false);
+
+    if (result && !result.success) {
+      setApplyErrorMessage(result.error || 'Failed to apply import.');
+      return;
+    }
+
+    const destinationLabel = targetSaveToDb 
+      ? 'into EduPulse-AI Supabase Database (public.students)' 
+      : 'into active local cohort';
+
+    setImportAppliedNotice(`Successfully loaded ${validationSummary.validStudents.length} verified student records ${destinationLabel} from "${validationSummary.fileName}".`);
     setShowConfirmModal(false);
   };
 
   const handleResetStaging = () => {
     setValidationSummary(null);
     setImportAppliedNotice(null);
+    setApplyErrorMessage(null);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -126,38 +165,89 @@ export const DataImportTab: React.FC<DataImportTabProps> = ({
 
   return (
     <div className="space-y-6">
-      {/* Current Dataset Context Banner */}
-      <div className="p-4 bg-white border border-slate-200/80 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs">
-        <div className="flex items-center gap-3">
-          <div className="p-2.5 rounded-xl bg-indigo-50 text-indigo-700">
-            <FileCheck className="w-5 h-5" />
-          </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Active Platform Dataset</span>
-              <span className={`px-2 py-0.5 rounded text-[11px] font-bold ${
-                datasetSource === 'Synthetic Demo' 
-                  ? 'bg-amber-100 text-amber-800' 
-                  : 'bg-emerald-100 text-emerald-800'
-              }`}>
-                {datasetSource}
-              </span>
+      {/* Current Dataset & Supabase Context Banners */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        {/* Active Cohort Banner */}
+        <div className="p-4 bg-white border border-slate-200/80 rounded-2xl flex items-center justify-between gap-3 shadow-xs">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 rounded-xl bg-indigo-50 text-indigo-700">
+              <FileCheck className="w-5 h-5" />
             </div>
-            <p className="text-xs text-slate-600 mt-0.5">
-              Current cohort size: <strong>{totalActiveStudents} students</strong> active in all dashboards and calculations.
-            </p>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Active Platform Dataset</span>
+                <span className={`px-2 py-0.5 rounded text-[11px] font-bold ${
+                  datasetSource === 'Synthetic Demo' 
+                    ? 'bg-amber-100 text-amber-800' 
+                    : datasetSource === 'Supabase DB'
+                    ? 'bg-indigo-100 text-indigo-800'
+                    : 'bg-emerald-100 text-emerald-800'
+                }`}>
+                  {datasetSource}
+                </span>
+              </div>
+              <p className="text-xs text-slate-600 mt-0.5">
+                Current cohort: <strong>{totalActiveStudents} students</strong> active in all dashboards.
+              </p>
+            </div>
           </div>
+
+          {datasetSource !== 'Synthetic Demo' && (
+            <button
+              onClick={onRestoreSyntheticDemo}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 text-xs font-semibold rounded-xl border border-amber-200 transition-colors flex-shrink-0"
+              title="Restore local demo dataset without deleting database records"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>Demo Mode</span>
+            </button>
+          )}
         </div>
 
-        {datasetSource !== 'Synthetic Demo' && (
-          <button
-            onClick={onRestoreSyntheticDemo}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 text-xs font-semibold rounded-xl border border-amber-200 transition-colors"
-          >
-            <RotateCcw className="w-3.5 h-3.5" />
-            <span>Restore Synthetic Demo</span>
-          </button>
-        )}
+        {/* Supabase Database Connection Status Banner */}
+        <div className="p-4 bg-white border border-slate-200/80 rounded-2xl flex items-center justify-between gap-3 shadow-xs">
+          <div className="flex items-center gap-3">
+            <div className={`p-2.5 rounded-xl ${
+              supabaseConnected 
+                ? 'bg-emerald-50 text-emerald-700' 
+                : supabaseConfigured 
+                ? 'bg-amber-50 text-amber-700'
+                : 'bg-slate-100 text-slate-600'
+            }`}>
+              <Database className="w-5 h-5" />
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold uppercase tracking-wider text-slate-500">EduPulse-AI Database</span>
+                <span className={`px-2 py-0.5 rounded text-[11px] font-bold ${
+                  supabaseConnected 
+                    ? 'bg-emerald-100 text-emerald-800' 
+                    : supabaseConfigured
+                    ? 'bg-rose-100 text-rose-800'
+                    : 'bg-slate-100 text-slate-700'
+                }`}>
+                  {supabaseConnected ? 'Connected' : supabaseConfigured ? 'Connection Error' : 'Unconfigured'}
+                </span>
+              </div>
+              <p className="text-xs text-slate-600 mt-0.5 truncate max-w-xs" title={supabaseMessage}>
+                {supabaseConnected 
+                  ? 'Table public.students active & secured with RLS'
+                  : supabaseMessage || 'Running in local Demo mode.'}
+              </p>
+            </div>
+          </div>
+
+          {supabaseConnected && onRefreshFromSupabase && (
+            <button
+              onClick={onRefreshFromSupabase}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-semibold rounded-xl border border-indigo-200 transition-colors flex-shrink-0"
+              title="Reload saved cohort from Supabase database"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              <span>Reload DB</span>
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Applied Notice */}
@@ -549,18 +639,60 @@ export const DataImportTab: React.FC<DataImportTabProps> = ({
               All overview KPIs, charts, priority tables, and student directories will immediately reflect this new cohort. You can restore the demo dataset anytime.
             </p>
 
+            {/* Supabase Persistence Option */}
+            {supabaseConnected && (
+              <label className="flex items-center gap-2.5 p-3 rounded-xl border border-indigo-200 bg-indigo-50/70 cursor-pointer transition-colors hover:bg-indigo-50">
+                <input
+                  type="checkbox"
+                  checked={saveToSupabase}
+                  onChange={(e) => setSaveToSupabase(e.target.checked)}
+                  disabled={isApplying}
+                  className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500"
+                />
+                <div className="text-xs">
+                  <span className="font-semibold text-indigo-950 block">Save to EduPulse-AI Supabase Database</span>
+                  <span className="text-indigo-700 text-[11px]">Atomically updates table public.students with verified records</span>
+                </div>
+              </label>
+            )}
+
+            {/* Error Notice (if save failed) */}
+            {applyErrorMessage && (
+              <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-900 flex items-start gap-2">
+                <AlertTriangle className="w-4 h-4 text-rose-600 flex-shrink-0 mt-0.5" />
+                <div>
+                  <strong className="font-semibold block">Failed to apply import:</strong>
+                  <p className="mt-0.5 text-rose-800">{applyErrorMessage}</p>
+                </div>
+              </div>
+            )}
+
             <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
               <button
-                onClick={() => setShowConfirmModal(false)}
-                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-xl transition-colors"
+                onClick={() => {
+                  setShowConfirmModal(false);
+                  setApplyErrorMessage(null);
+                }}
+                disabled={isApplying}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-xl transition-colors disabled:opacity-50"
               >
                 Cancel
               </button>
               <button
                 onClick={handleConfirmApply}
-                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl shadow-xs transition-colors"
+                disabled={isApplying}
+                className="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl shadow-xs transition-colors disabled:opacity-50"
               >
-                Confirm & Apply Cohort
+                {isApplying ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Saving Cohort...</span>
+                  </>
+                ) : (
+                  <span>
+                    {saveToSupabase && supabaseConnected ? 'Confirm & Save to Supabase' : 'Confirm & Apply Cohort'}
+                  </span>
+                )}
               </button>
             </div>
           </div>

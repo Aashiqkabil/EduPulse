@@ -42,7 +42,9 @@ export interface Student {
 
 export type NavTab = 'overview' | 'students' | 'analytics' | 'data-import';
 
-export type DatasetSource = 'Synthetic Demo' | 'Imported CSV';
+export type DatasetSource = 'Synthetic Demo' | 'Imported CSV' | 'Supabase DB';
+
+export type SupabaseConnectionStatus = 'unconfigured' | 'connecting' | 'connected' | 'error';
 
 export interface DashboardFilterState {
   searchQuery: string;

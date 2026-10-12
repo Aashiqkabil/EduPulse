@@ -7,6 +7,8 @@
  */
 
 import Papa from 'papaparse';
+import fs from 'fs';
+import path from 'path';
 
 // ======================================================================
 // 1. Duplicate the scoring engine logic (mirrors src/utils/scoringEngine.ts)
@@ -38,8 +40,8 @@ function clampPercentage(val) {
 }
 
 function classifyAcademicRisk(cgpa, attendanceRate) {
-  if (cgpa === null || cgpa === undefined || isNaN(cgpa)) return 'Unknown';
-  if (attendanceRate === null || attendanceRate === undefined || isNaN(attendanceRate)) return 'Unknown';
+  if (cgpa === null || cgpa === undefined || isNaN(cgpa) || cgpa < 0 || cgpa > 10.0) return 'Unknown';
+  if (attendanceRate === null || attendanceRate === undefined || isNaN(attendanceRate) || attendanceRate < 0 || attendanceRate > 100) return 'Unknown';
   const cgpaPct = normalizeCgpa(cgpa);
   const att = clampPercentage(attendanceRate);
   if (cgpaPct < 50 || att < 60) return 'High';
@@ -48,8 +50,8 @@ function classifyAcademicRisk(cgpa, attendanceRate) {
 }
 
 function classifyPlacementRisk(readiness, skill) {
-  if (readiness === null || readiness === undefined || isNaN(readiness)) return 'Unknown';
-  if (skill === null || skill === undefined || isNaN(skill)) return 'Unknown';
+  if (readiness === null || readiness === undefined || isNaN(readiness) || readiness < 0 || readiness > 100) return 'Unknown';
+  if (skill === null || skill === undefined || isNaN(skill) || skill < 0 || skill > 5.0) return 'Unknown';
   const readPct = clampPercentage(readiness);
   const skillPct = normalizeSkillRating(skill);
   if (readPct < 40 || skillPct < 40) return 'High';
@@ -106,9 +108,20 @@ function calculateScore(input) {
     placementRisk,
     hasInsufficientData: false,
     incompleteReasons: [],
-    scoreBreakdown: { academicComp, attComp, lmsComp, engComp, skillComp, placeComp,
-      cgpaNormalized: cgpaNorm, attendanceNormalized: attNorm, lmsNormalized: lmsNorm,
-      engagementNormalized: engNorm, skillsNormalized: skillNorm, placementNormalized: placeNorm }
+    scoreBreakdown: {
+      academicComponent: academicComp,
+      attendanceComponent: attComp,
+      lmsComponent: lmsComp,
+      engagementComponent: engComp,
+      skillsComponent: skillComp,
+      placementComponent: placeComp,
+      cgpaNormalized: cgpaNorm,
+      attendanceNormalized: attNorm,
+      lmsNormalized: lmsNorm,
+      engagementNormalized: engNorm,
+      skillsNormalized: skillNorm,
+      placementNormalized: placeNorm
+    }
   };
 }
 
@@ -336,6 +349,60 @@ function exportValidationErrorsToCsv(errors) {
   })));
 }
 
+function generateSampleCsvTemplate() {
+  const sampleRows = [
+    {
+      studentId: 'STU-2024-101',
+      name: 'Aditi Varma',
+      email: 'aditi.v@university.edu',
+      department: 'Computer Science',
+      semester: 6,
+      cgpa: 8.75,
+      attendanceRate: 92,
+      assignmentScore: 88,
+      engagementScore: 85,
+      technicalSkillsRating: 4.5,
+      placementReadinessScore: 88,
+      internshipCompleted: 'TRUE',
+      backlogs: 0,
+      feedback: 'Excellent problem solving and algorithm skills'
+    },
+    {
+      studentId: 'STU-2024-102',
+      name: 'Kunal Kapoor',
+      email: 'kunal.k@university.edu',
+      department: 'Data Science',
+      semester: 6,
+      cgpa: 6.20,
+      attendanceRate: 64,
+      assignmentScore: 60,
+      engagementScore: 58,
+      technicalSkillsRating: 2.8,
+      placementReadinessScore: 48,
+      internshipCompleted: 'FALSE',
+      backlogs: 2,
+      feedback: 'Needs intervention in core statistics and attendance'
+    },
+    {
+      studentId: 'STU-2024-103',
+      name: 'Sunita Rao',
+      email: 'sunita.rao@university.edu',
+      department: 'Electronics & Comm',
+      semester: 6,
+      cgpa: 7.80,
+      attendanceRate: 85,
+      assignmentScore: 82,
+      engagementScore: 78,
+      technicalSkillsRating: 3.8,
+      placementReadinessScore: 72,
+      internshipCompleted: 'TRUE',
+      backlogs: 0,
+      feedback: 'Good project performance in embedded circuits'
+    }
+  ];
+  return Papa.unparse(sampleRows);
+}
+
 // ======================================================================
 // 3. Test Framework
 // ======================================================================
@@ -413,6 +480,10 @@ assertEq(classifyAcademicRisk(null, 90), 'Unknown', 'Missing CGPA → Unknown');
 assertEq(classifyAcademicRisk(8.0, null), 'Unknown', 'Missing Attendance → Unknown');
 assertEq(classifyAcademicRisk(null, null), 'Unknown', 'Both missing → Unknown');
 assertEq(classifyAcademicRisk(undefined, 90), 'Unknown', 'Undefined CGPA → Unknown');
+assertEq(classifyAcademicRisk(11.0, 90), 'Unknown', 'CGPA 11.0 (> 10.0) → Unknown (not Low)');
+assertEq(classifyAcademicRisk(-1.5, 90), 'Unknown', 'CGPA -1.5 (< 0.0) → Unknown');
+assertEq(classifyAcademicRisk(8.0, 110), 'Unknown', 'Attendance 110% (> 100%) → Unknown (not Low)');
+assertEq(classifyAcademicRisk(8.0, -5), 'Unknown', 'Attendance -5% (< 0%) → Unknown');
 // Both triggers
 assertEq(classifyAcademicRisk(3.0, 40), 'High', 'Both below High thresholds → High');
 
@@ -433,6 +504,10 @@ assertEq(classifyPlacementRisk(80, 3.0), 'Low', 'Skill 3.0 (60%) → Low (bounda
 // Unknown
 assertEq(classifyPlacementRisk(null, 4.0), 'Unknown', 'Missing readiness → Unknown');
 assertEq(classifyPlacementRisk(80, null), 'Unknown', 'Missing skill → Unknown');
+assertEq(classifyPlacementRisk(115, 4.0), 'Unknown', 'Readiness 115 (> 100) → Unknown (not Low)');
+assertEq(classifyPlacementRisk(-10, 4.0), 'Unknown', 'Readiness -10 (< 0) → Unknown');
+assertEq(classifyPlacementRisk(80, 6.0), 'Unknown', 'Skill 6.0 (> 5.0) → Unknown (not Low)');
+assertEq(classifyPlacementRisk(80, -0.5), 'Unknown', 'Skill -0.5 (< 0.0) → Unknown');
 
 // ────────────────────────────────────────────────────────────────────
 // SUITE 4: Weighted Score Calculation
@@ -480,6 +555,13 @@ assertEq(missingOne.placementRisk, 'Unknown', 'Missing skill → placement Unkno
 const outRange = calculateScore({ cgpa: 11.0, attendanceRate: 90, assignmentScore: 80, engagementScore: 70, technicalSkillsRating: 4.0, placementReadinessScore: 80 });
 assertEq(outRange.successScore, null, 'Out-of-range CGPA → score null');
 assertEq(outRange.hasInsufficientData, true, 'Out-of-range CGPA → insufficient');
+assertEq(outRange.academicRisk, 'Unknown', 'Out-of-range CGPA → academic risk Unknown (NOT Low)');
+
+// Out-of-range Skill
+const outRangeSkill = calculateScore({ cgpa: 8.5, attendanceRate: 90, assignmentScore: 80, engagementScore: 70, technicalSkillsRating: 6.0, placementReadinessScore: 80 });
+assertEq(outRangeSkill.successScore, null, 'Out-of-range Skill → score null');
+assertEq(outRangeSkill.hasInsufficientData, true, 'Out-of-range Skill → insufficient');
+assertEq(outRangeSkill.placementRisk, 'Unknown', 'Out-of-range Skill → placement risk Unknown (NOT Low)');
 
 // ────────────────────────────────────────────────────────────────────
 // SUITE 6: Header Normalization
@@ -708,6 +790,116 @@ STU-E2,Test,valid@u.edu,CS,6,8.0,90,80,80,4.0,80,TRUE,0`;
 const emailResult = await validateCsvContent(emailCsv, 'email.csv');
 assertEq(emailResult.validRowsCount, 1, 'Only valid email accepted');
 assert(emailResult.errors.some(e => e.studentId === 'STU-E1' && e.column === 'email'), 'Invalid email flagged');
+
+// ────────────────────────────────────────────────────────────────────
+// SUITE 21: Test Fixtures on Disk (End-to-End File Validation)
+// ────────────────────────────────────────────────────────────────────
+console.log('\n─── SUITE 21: Disk Fixtures End-to-End Validation ───');
+const fixturesDir = path.resolve('test-fixtures');
+
+// 1. Valid students fixture
+const validFixtPath = path.join(fixturesDir, 'valid-students.csv');
+const validFixtContent = fs.readFileSync(validFixtPath, 'utf8');
+const validFixtResult = await validateCsvContent(validFixtContent, 'valid-students.csv');
+assertEq(validFixtResult.totalRows, 5, 'valid-students.csv → 5 total rows');
+assertEq(validFixtResult.validRowsCount, 5, 'valid-students.csv → 5 valid rows');
+assertEq(validFixtResult.invalidRowsCount, 0, 'valid-students.csv → 0 invalid rows');
+assertEq(validFixtResult.errors.length, 0, 'valid-students.csv → 0 errors');
+assertEq(validFixtResult.validStudents[0].academicRisk, 'Low', 'STU-VAL-001 (CGPA=9.2, Att=96) → Low academic risk');
+assertEq(validFixtResult.validStudents[0].placementRisk, 'Low', 'STU-VAL-001 (Skill=4.8, Pl=92) → Low placement risk');
+assertEq(validFixtResult.validStudents[1].academicRisk, 'Medium', 'STU-VAL-002 (CGPA=6.1, Att=68) → Medium academic risk');
+assertEq(validFixtResult.validStudents[1].placementRisk, 'Medium', 'STU-VAL-002 (Skill=3.2, Pl=55) → Medium placement risk');
+assertEq(validFixtResult.validStudents[2].academicRisk, 'High', 'STU-VAL-003 (CGPA=4.6, Att=55) → High academic risk');
+assertEq(validFixtResult.validStudents[3].placementRisk, 'High', 'STU-VAL-004 (Skill=1.8, Pl=36) → High placement risk');
+assertEq(validFixtResult.validStudents[4].academicRisk, 'Low', 'STU-VAL-005 (CGPA=7.4, Att=82) → Low academic risk');
+assertEq(validFixtResult.validStudents[4].placementRisk, 'Low', 'STU-VAL-005 (Skill=3.6, Pl=74) → Low placement risk');
+
+// 2. Invalid students fixture
+const invalidFixtPath = path.join(fixturesDir, 'invalid-students.csv');
+const invalidFixtContent = fs.readFileSync(invalidFixtPath, 'utf8');
+const invalidFixtResult = await validateCsvContent(invalidFixtContent, 'invalid-students.csv');
+assertEq(invalidFixtResult.validRowsCount, 0, 'invalid-students.csv → 0 valid rows accepted');
+assert(invalidFixtResult.duplicateIdsCount > 0, 'invalid-students.csv → duplicates detected');
+assert(invalidFixtResult.errors.length >= 10, 'invalid-students.csv → all invalid rows produce errors');
+
+// 3. Empty fixture
+const emptyFixtPath = path.join(fixturesDir, 'empty.csv');
+const emptyFixtContent = fs.readFileSync(emptyFixtPath, 'utf8');
+const emptyFixtResult = await validateCsvContent(emptyFixtContent, 'empty.csv');
+assertEq(emptyFixtResult.totalRows, 0, 'empty.csv → 0 rows');
+assertEq(emptyFixtResult.validRowsCount, 0, 'empty.csv → 0 valid rows');
+assert(emptyFixtResult.errors[0].message.includes('empty'), 'empty.csv → error mentions empty file');
+
+// 4. Mixed fixture
+const mixedFixtPath = path.join(fixturesDir, 'mixed-students.csv');
+const mixedFixtContent = fs.readFileSync(mixedFixtPath, 'utf8');
+const mixedFixtResult = await validateCsvContent(mixedFixtContent, 'mixed-students.csv');
+assertEq(mixedFixtResult.totalRows, 3, 'mixed-students.csv → 3 total rows');
+assertEq(mixedFixtResult.validRowsCount, 2, 'mixed-students.csv → 2 valid rows');
+assertEq(mixedFixtResult.invalidRowsCount, 1, 'mixed-students.csv → 1 invalid row');
+assert(mixedFixtResult.errors.some(e => e.column === 'cgpa' && e.studentId === 'STU-MIX-BAD'), 'mixed-students.csv → bad row flagged');
+
+// ────────────────────────────────────────────────────────────────────
+// SUITE 22: Sample CSV Template Compatibility & Export
+// ────────────────────────────────────────────────────────────────────
+console.log('\n─── SUITE 22: Sample CSV Template Compatibility ───');
+const sampleTemplateCsv = generateSampleCsvTemplate();
+assert(sampleTemplateCsv.length > 0, 'Template generator produces non-empty CSV string');
+const sampleResult = await validateCsvContent(sampleTemplateCsv, 'sample_template.csv');
+assertEq(sampleResult.totalRows, 3, 'Sample template parses 3 rows');
+assertEq(sampleResult.validRowsCount, 3, 'Sample template produces 3 valid rows');
+assertEq(sampleResult.invalidRowsCount, 0, 'Sample template produces 0 invalid rows');
+assertEq(sampleResult.errors.length, 0, 'Sample template produces 0 errors');
+assert(sampleResult.validStudents[0].successScore !== null, 'Template row 1 has computed success score');
+assertEq(sampleResult.validStudents[0].academicRisk, 'Low', 'Template row 1 academic risk = Low');
+assertEq(sampleResult.validStudents[0].placementRisk, 'Low', 'Template row 1 placement risk = Low');
+assertEq(sampleResult.validStudents[1].academicRisk, 'Medium', 'Template row 2 academic risk = Medium');
+assertEq(sampleResult.validStudents[1].placementRisk, 'Medium', 'Template row 2 placement risk = Medium');
+
+// ────────────────────────────────────────────────────────────────────
+// SUITE 23: Dashboard KPI Calculation, Filtering & Modal Breakdown Consistency
+// ────────────────────────────────────────────────────────────────────
+console.log('\n─── SUITE 23: Dashboard KPIs, Filtering & Score Breakdown ───');
+// Test KPI calculation matching OverviewTab
+const testDataset = validFixtResult.validStudents; // 5 students
+const scoredStudents = testDataset.filter(s => typeof s.successScore === 'number' && !isNaN(s.successScore));
+const avgScore = scoredStudents.length > 0 
+  ? Number((scoredStudents.reduce((acc, s) => acc + s.successScore, 0) / scoredStudents.length).toFixed(1))
+  : 0;
+assertEq(testDataset.length, 5, 'KPI: Total Students = 5');
+assert(avgScore > 0, `KPI: Average Score = ${avgScore} > 0`);
+const academicHighCount = testDataset.filter(s => s.academicRisk === 'High').length;
+const academicMedCount = testDataset.filter(s => s.academicRisk === 'Medium').length;
+const academicLowCount = testDataset.filter(s => s.academicRisk === 'Low').length;
+assertEq(academicHighCount, 1, 'KPI: Academic High Risk = 1');
+assertEq(academicMedCount, 1, 'KPI: Academic Medium Risk = 1');
+assertEq(academicLowCount, 3, 'KPI: Academic Low Risk = 3');
+
+// Test department filtering matching StudentsTab
+const csStudents = testDataset.filter(s => s.department === 'Computer Science');
+assertEq(csStudents.length, 1, 'Filter: Department Computer Science returns 1 student');
+assertEq(csStudents[0].studentId, 'STU-VAL-001', 'Filter: Returned student is STU-VAL-001');
+
+// Test search filtering matching StudentsTab
+const searchSharma = testDataset.filter(s => 
+  s.name.toLowerCase().includes('sharma') || 
+  s.studentId.toLowerCase().includes('sharma') || 
+  s.department.toLowerCase().includes('sharma')
+);
+assertEq(searchSharma.length, 1, 'Search: "sharma" finds Aarav Sharma');
+
+// Test sorting by CGPA desc matching StudentsTab
+const sortedByCgpaDesc = [...testDataset].sort((a, b) => b.cgpa - a.cgpa);
+assertEq(sortedByCgpaDesc[0].cgpa, 9.2, 'Sort: Highest CGPA first (9.2)');
+assertEq(sortedByCgpaDesc[sortedByCgpaDesc.length - 1].cgpa, 4.6, 'Sort: Lowest CGPA last (4.6)');
+
+// Test Modal score breakdown mathematical consistency
+testDataset.forEach(student => {
+  const bd = student.scoreBreakdown;
+  assert(bd !== undefined, `Modal: Score breakdown exists for ${student.studentId}`);
+  const compSum = Number((bd.academicComponent + bd.attendanceComponent + bd.lmsComponent + bd.engagementComponent + bd.skillsComponent + bd.placementComponent).toFixed(1));
+  assertApprox(compSum, student.successScore, 0.1, `Modal: Breakdown components sum (${compSum}) ≈ successScore (${student.successScore}) for ${student.studentId}`);
+});
 
 // ────────────────────────────────────────────────────────────────────
 // SUMMARY
