@@ -8,7 +8,8 @@ import {
   RotateCcw,
   ChevronLeft,
   ChevronRight,
-  UserPlus
+  UserPlus,
+  Users
 } from 'lucide-react';
 import { Student } from '../../types/student';
 import { EmptyState } from '../common/EmptyState';
@@ -180,6 +181,45 @@ export const StudentsTab: React.FC<StudentsTabProps> = ({
           </span>
         </div>
       )}
+
+      {/* Cohort Capacity Banner */}
+      <div className="p-3.5 bg-gradient-to-r from-purple-50/70 via-indigo-50/50 to-white border border-purple-200/80 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs shadow-xs">
+        <div className="flex items-center gap-3">
+          <div className="p-2 rounded-xl bg-purple-100 text-purple-700 font-bold flex-shrink-0">
+            <Users className="w-4 h-4" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="font-bold text-slate-900">Cohort Space & Capacity:</span>
+              <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-purple-100 text-purple-800">
+                {students.length} / 100 Slots Occupied
+              </span>
+              <span className="text-emerald-700 font-semibold text-[11px]">
+                ({Math.max(0, 100 - students.length)} Free Slots for CSV Ingestion)
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-500 mt-0.5">
+              Default cohort starts with 20 base students. Platform supports up to 100 students for seamless CSV data insertion and scalability testing.
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 self-start sm:self-auto flex-shrink-0">
+          <button
+            onClick={() => {
+              setPageSize(100);
+              setCurrentPage(1);
+            }}
+            className={`px-3 py-1.5 text-xs font-semibold rounded-xl border transition-colors cursor-pointer ${
+              pageSize === 100 || pageSize === 'ALL'
+                ? 'bg-indigo-600 text-white border-indigo-600 shadow-2xs'
+                : 'bg-white text-indigo-700 border-indigo-200 hover:bg-indigo-50'
+            }`}
+            title="Display all students on a single page up to 100 capacity"
+          >
+            Show All 100 Slots
+          </button>
+        </div>
+      </div>
 
       {/* Top Filter Bar */}
       <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs space-y-3">

@@ -361,8 +361,23 @@ export const App: React.FC = () => {
   const handleApplyImport = async (
     importedStudents: Student[],
     fileName: string,
-    saveToSupabase: boolean = false
+    saveToSupabase: boolean = false,
+    importMode: 'merge' | 'replace' = 'merge'
   ): Promise<{ success: boolean; count?: number; error?: string | null }> => {
+    // Construct target cohort based on importMode:
+    // 'merge' appends new incoming students to the active cohort and updates matching IDs up to 100 capacity
+    // 'replace' loads only the file's records up to 100 capacity
+    let targetCohort: Student[];
+    if (importMode === 'merge') {
+      const incomingMap = new Map(importedStudents.map(s => [s.studentId, s]));
+      const updatedExisting = activeStudents.map(s => incomingMap.get(s.studentId) || s);
+      const existingIdSet = new Set(activeStudents.map(s => s.studentId));
+      const newlyAdded = importedStudents.filter(s => !existingIdSet.has(s.studentId));
+      targetCohort = [...updatedExisting, ...newlyAdded].slice(0, 100);
+    } else {
+      targetCohort = importedStudents.slice(0, 100);
+    }
+
     // Safeguard: Demo mode must never write to remote Supabase
     if (isDemoMode) {
       if (saveToSupabase) {
@@ -373,7 +388,7 @@ export const App: React.FC = () => {
       }
 
       // Local-only session apply
-      setActiveStudents(importedStudents);
+      setActiveStudents(targetCohort);
       setDatasetSource('Imported CSV');
       setImportedFileName(fileName);
       setHasError(false);
@@ -392,7 +407,7 @@ export const App: React.FC = () => {
 
     if (saveToSupabase && isSupabaseConfigured()) {
       setIsLoading(true);
-      const saveRes = await replaceCohortInSupabase(importedStudents);
+      const saveRes = await replaceCohortInSupabase(targetCohort);
       setIsLoading(false);
 
       if (!saveRes.success) {
@@ -420,7 +435,7 @@ export const App: React.FC = () => {
     }
 
     // Local-only session apply for live admin
-    setActiveStudents(importedStudents);
+    setActiveStudents(targetCohort);
     setDatasetSource('Imported CSV');
     setImportedFileName(fileName);
     setHasError(false);

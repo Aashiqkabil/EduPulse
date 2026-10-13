@@ -510,3 +510,68 @@ export function generateSampleCsvTemplate(): string {
 
   return Papa.unparse(sampleRows);
 }
+
+/**
+ * Generates a batch of new test students (e.g. STU-2024-021 to STU-2024-030)
+ * specifically designed to test CSV ingestion into the available 80 capacity slots.
+ */
+export function generateTestBatchCsv(startIdNum: number = 21, count: number = 10): string {
+  const departments = [
+    'Computer Science',
+    'Information Technology',
+    'Data Science',
+    'Electronics & Comm',
+    'Electrical Engineering',
+    'Mechanical Engineering'
+  ];
+  const names = [
+    { first: 'Aditya', last: 'Sharma' },
+    { first: 'Kavya', last: 'Pillai' },
+    { first: 'Tanvi', last: 'Rao' },
+    { first: 'Devansh', last: 'Joshi' },
+    { first: 'Priyanka', last: 'Menon' },
+    { first: 'Siddharth', last: 'Jain' },
+    { first: 'Ritika', last: 'Roy' },
+    { first: 'Varun', last: 'Reddy' },
+    { first: 'Ishita', last: 'Banerjee' },
+    { first: 'Gaurav', last: 'Bhatia' },
+    { first: 'Meera', last: 'Nair' },
+    { first: 'Arjun', last: 'Kapoor' },
+  ];
+
+  const rows = [];
+  for (let i = 0; i < count; i++) {
+    const idNum = startIdNum + i;
+    const idPad = String(idNum).padStart(3, '0');
+    const nameObj = names[i % names.length];
+    const fullName = `${nameObj.first} ${nameObj.last}`;
+    const email = `${nameObj.first.toLowerCase()}.${nameObj.last.toLowerCase()}${idNum}@campus.edu`;
+    const dept = departments[i % departments.length];
+    const cgpa = Number((6.5 + (i * 0.28) % 3.4).toFixed(2));
+    const att = Math.min(98, 65 + (i * 4) % 32);
+    const assign = Math.min(95, 60 + (i * 3.5) % 35);
+    const eng = Math.min(95, 62 + (i * 3.2) % 33);
+    const skills = Number((2.8 + (i * 0.2) % 2.1).toFixed(1));
+    const place = Math.min(95, 55 + (i * 4.2) % 40);
+    const backlogs = att < 70 ? 1 : 0;
+
+    rows.push({
+      studentId: `STU-2024-${idPad}`,
+      name: fullName,
+      email,
+      department: dept,
+      semester: 6,
+      cgpa,
+      attendanceRate: att,
+      assignmentScore: assign,
+      engagementScore: eng,
+      technicalSkillsRating: skills,
+      placementReadinessScore: place,
+      internshipCompleted: place > 75 ? 'TRUE' : 'FALSE',
+      backlogs,
+      feedback: `Ingested test record #${i + 1} for cohort scalability demonstration.`
+    });
+  }
+
+  return Papa.unparse(rows);
+}

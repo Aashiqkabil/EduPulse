@@ -367,10 +367,16 @@ export async function replaceCohortInSupabase(students: Student[]): Promise<{
       return toDbStudent(scored);
     });
 
-    // 4. Invoke the atomic, non-destructive upsert stored procedure
+    // 4. Sanitize payload: Remove protected system keys that the RPC rejects
+    const cleanDbRows = fullDbRows.map((row: any) => {
+      const { id, profile_id, class_id, created_at, updated_at, is_synthetic, ...clean } = row;
+      return clean;
+    });
+
+    // 5. Invoke the atomic, non-destructive upsert stored procedure
     // Note: All insecure legacy fallbacks (replace_student_cohort and direct table upserts) are permanently removed.
     const { data: upsertData, error: upsertError } = await client.rpc('upsert_student_cohort', {
-      p_students: fullDbRows,
+      p_students: cleanDbRows,
     });
 
     if (upsertError) {

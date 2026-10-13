@@ -150,12 +150,12 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
         <KpiCard
           title="Total Students"
           value={totalStudents}
-          subValue="Active cohort"
+          subValue={`/ 100 capacity (${Math.max(0, 100 - totalStudents)} free slots)`}
           icon={<Users className="w-5 h-5" />}
           variant="indigo"
-          changeText={datasetSource}
+          changeText={`${totalStudents}/100 Slots`}
           changeType="neutral"
-          note={`Across ${Object.keys(deptDataMap).length} Depts`}
+          note={`Across ${Object.keys(deptDataMap).length} Depts • Space for 100`}
         />
 
         <KpiCard

@@ -13,13 +13,17 @@ import {
   FileCheck,
   Database,
   RefreshCw,
-  Loader2
+  Loader2,
+  Users,
+  Layers,
+  Sparkles
 } from 'lucide-react';
 import { Student, CsvValidationSummary } from '../../types/student';
 import { 
   validateCsvContent, 
   exportValidationErrorsToCsv, 
   generateSampleCsvTemplate,
+  generateTestBatchCsv,
   CSV_SCHEMA_COLUMNS 
 } from '../../utils/csvValidator';
 import { SCORING_DISCLAIMER } from '../../utils/scoringEngine';
@@ -38,7 +42,8 @@ interface DataImportTabProps {
   onApplyImport: (
     importedStudents: Student[],
     fileName: string,
-    saveToSupabase: boolean
+    saveToSupabase: boolean,
+    importMode?: 'merge' | 'replace'
   ) => Promise<{ success: boolean; count?: number; error?: string | null }> | { success: boolean; count?: number; error?: string | null };
   datasetSource: string;
   totalActiveStudents: number;
@@ -68,6 +73,8 @@ export const DataImportTab: React.FC<DataImportTabProps> = ({
   const [isValidating, setIsValidating] = useState(false);
   const [validationSummary, setValidationSummary] = useState<CsvValidationSummary | null>(null);
   const [downloadSuccess, setDownloadSuccess] = useState(false);
+  const [testBatchSuccess, setTestBatchSuccess] = useState(false);
+  const [importMode, setImportMode] = useState<'merge' | 'replace'>('merge');
   const [errorDownloadSuccess, setErrorDownloadSuccess] = useState(false);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [importAppliedNotice, setImportAppliedNotice] = useState<string | null>(null);
@@ -103,6 +110,14 @@ export const DataImportTab: React.FC<DataImportTabProps> = ({
     triggerDownload(csvData, 'EduPulse_Student_Import_Template.csv');
     setDownloadSuccess(true);
     setTimeout(() => setDownloadSuccess(false), 3000);
+  };
+
+  // Download 10 New Students Test CSV (STU-2024-021 to 030) to test CSV insertion into free slots
+  const handleDownloadTestBatch = () => {
+    const csvData = generateTestBatchCsv(21, 10);
+    triggerDownload(csvData, 'EduPulse_Test_10_New_Students_STU021-030.csv');
+    setTestBatchSuccess(true);
+    setTimeout(() => setTestBatchSuccess(false), 3000);
   };
 
   // Download Validation Errors CSV
@@ -160,7 +175,8 @@ export const DataImportTab: React.FC<DataImportTabProps> = ({
     const result = await onApplyImport(
       validationSummary.validStudents,
       validationSummary.fileName,
-      targetSaveToDb
+      targetSaveToDb,
+      importMode
     );
 
     setIsApplying(false);
@@ -186,10 +202,12 @@ export const DataImportTab: React.FC<DataImportTabProps> = ({
       timestamp: new Date().toLocaleTimeString(),
     });
 
+    const modeLabel = importMode === 'merge' ? 'merged and appended into free cohort slots' : 'loaded as replacement cohort';
+
     if (targetSaveToDb && savedCount > 0) {
-      setImportAppliedNotice(`Successfully saved and verified ${savedCount} student records ${destinationLabel} from "${validationSummary.fileName}".`);
+      setImportAppliedNotice(`Successfully saved and verified ${savedCount} student records (${modeLabel}) ${destinationLabel} from "${validationSummary.fileName}".`);
     } else {
-      setImportAppliedNotice(`Loaded ${validationSummary.validStudents.length} verified student records into active local session (0 saved to database) from "${validationSummary.fileName}".`);
+      setImportAppliedNotice(`Loaded ${validationSummary.validStudents.length} verified student records (${modeLabel}) into active local session (0 saved to database) from "${validationSummary.fileName}".`);
     }
     setShowConfirmModal(false);
   };
@@ -206,8 +224,28 @@ export const DataImportTab: React.FC<DataImportTabProps> = ({
 
   return (
     <div className="space-y-6">
-      {/* Current Dataset & Supabase Context Banners */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+      {/* Current Dataset, Capacity & Supabase Context Banners */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        {/* Cohort Space & Capacity Banner */}
+        <div className="p-4 bg-white border border-slate-200/80 rounded-2xl flex items-center justify-between gap-3 shadow-xs">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 rounded-xl bg-purple-50 text-purple-700">
+              <Users className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Cohort Space & Limit</span>
+                <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-purple-100 text-purple-800">
+                  {totalActiveStudents} / 100 Slots
+                </span>
+              </div>
+              <p className="text-xs text-slate-600 mt-0.5">
+                <strong>{Math.max(0, 100 - totalActiveStudents)} Free Slots Available</strong> for CSV data ingestion.
+              </p>
+            </div>
+          </div>
+        </div>
+
         {/* Active Cohort Banner */}
         <div className="p-4 bg-white border border-slate-200/80 rounded-2xl flex items-center justify-between gap-3 shadow-xs">
           <div className="flex items-center gap-3">
@@ -437,23 +475,43 @@ export const DataImportTab: React.FC<DataImportTabProps> = ({
             </p>
           </div>
 
-          <button
-            onClick={handleDownloadTemplate}
-            className="inline-flex items-center gap-2 px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-xl shadow-xs transition-colors self-start sm:self-auto"
-            title="Download CSV template matching required schema"
-          >
-            {downloadSuccess ? (
-              <>
-                <CheckCircle2 className="w-4 h-4 text-emerald-300" />
-                <span>Downloaded Template!</span>
-              </>
-            ) : (
-              <>
-                <Download className="w-4 h-4" />
-                <span>Download Sample CSV Template</span>
-              </>
-            )}
-          </button>
+          <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+            <button
+              onClick={handleDownloadTestBatch}
+              className="inline-flex items-center gap-1.5 px-3 py-2 bg-purple-50 hover:bg-purple-100 text-purple-700 text-xs font-semibold rounded-xl border border-purple-200 transition-colors shadow-2xs"
+              title="Download 10 new test students (STU-2024-021 to STU-2024-030) ready to test CSV insertion into free slots"
+            >
+              {testBatchSuccess ? (
+                <>
+                  <CheckCircle2 className="w-3.5 h-3.5 text-purple-600" />
+                  <span>Downloaded 10 Test Students!</span>
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-3.5 h-3.5 text-purple-600" />
+                  <span>Download 10 New Students Test CSV</span>
+                </>
+              )}
+            </button>
+
+            <button
+              onClick={handleDownloadTemplate}
+              className="inline-flex items-center gap-1.5 px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-xl shadow-xs transition-colors"
+              title="Download blank CSV template matching required schema"
+            >
+              {downloadSuccess ? (
+                <>
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-300" />
+                  <span>Downloaded Template!</span>
+                </>
+              ) : (
+                <>
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Download Blank Template</span>
+                </>
+              )}
+            </button>
+          </div>
         </div>
 
         {/* Drag and Drop Zone */}
@@ -531,6 +589,72 @@ export const DataImportTab: React.FC<DataImportTabProps> = ({
               </div>
             </div>
 
+            {/* Ingestion Mode Choice (Supports up to 100 Students) */}
+            <div className="p-4 bg-slate-50 border border-slate-200/90 rounded-2xl space-y-2.5">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                <span className="text-xs font-bold uppercase tracking-wider text-slate-800 flex items-center gap-1.5">
+                  <Layers className="w-4 h-4 text-indigo-600" />
+                  <span>Choose Ingestion Mode (Up to 100 Total Capacity)</span>
+                </span>
+                <span className="text-[11px] text-slate-500 font-medium">
+                  Current: <strong className="text-slate-800">{totalActiveStudents}</strong> / 100 slots occupied ({Math.max(0, 100 - totalActiveStudents)} free)
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <div
+                  onClick={() => setImportMode('merge')}
+                  className={`p-3 rounded-xl border text-xs cursor-pointer transition-all flex items-start gap-2.5 ${
+                    importMode === 'merge'
+                      ? 'bg-indigo-50/90 border-indigo-500 ring-1 ring-indigo-500 shadow-2xs'
+                      : 'bg-white border-slate-200 hover:border-slate-300'
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="importMode"
+                    checked={importMode === 'merge'}
+                    onChange={() => setImportMode('merge')}
+                    className="mt-0.5 text-indigo-600"
+                  />
+                  <div>
+                    <span className="font-bold text-slate-900 block flex items-center gap-1.5">
+                      <span>Append & Merge into Free Slots</span>
+                      <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                        Recommended
+                      </span>
+                    </span>
+                    <span className="text-[11px] text-slate-600 leading-normal block mt-0.5">
+                      Keeps current {totalActiveStudents} students, adding new incoming students into empty slots (up to 100 slots total).
+                    </span>
+                  </div>
+                </div>
+
+                <div
+                  onClick={() => setImportMode('replace')}
+                  className={`p-3 rounded-xl border text-xs cursor-pointer transition-all flex items-start gap-2.5 ${
+                    importMode === 'replace'
+                      ? 'bg-amber-50/90 border-amber-500 ring-1 ring-amber-500 shadow-2xs'
+                      : 'bg-white border-slate-200 hover:border-slate-300'
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="importMode"
+                    checked={importMode === 'replace'}
+                    onChange={() => setImportMode('replace')}
+                    className="mt-0.5 text-amber-600"
+                  />
+                  <div>
+                    <span className="font-bold text-slate-900 block">Replace Entire Cohort</span>
+                    <span className="text-[11px] text-slate-600 leading-normal block mt-0.5">
+                      Clears current active students and sets cohort strictly to the records from the uploaded file (up to 100).
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
             {/* Ingestion Action Bar */}
             <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
               <div>
@@ -576,7 +700,7 @@ export const DataImportTab: React.FC<DataImportTabProps> = ({
                     onClick={() => setShowConfirmModal(true)}
                     className="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl shadow-xs transition-colors"
                   >
-                    <span>Apply Import ({validationSummary.validRowsCount} Rows)</span>
+                    <span>Apply Import ({validationSummary.validRowsCount} Rows • {importMode === 'merge' ? 'Merge into Slots' : 'Replace Cohort'})</span>
                     <ArrowRight className="w-4 h-4" />
                   </button>
                 )}
@@ -772,14 +896,32 @@ export const DataImportTab: React.FC<DataImportTabProps> = ({
 
             <div>
               <h3 className="text-lg font-bold text-slate-900">
-                Confirm Dataset Replacement
+                {importMode === 'merge' ? 'Confirm Student Cohort Ingestion & Merge' : 'Confirm Dataset Replacement'}
               </h3>
               <p className="text-xs text-slate-500 mt-1">
-                You are about to load <strong>{validationSummary.validStudents.length} validated student records</strong> from <code className="font-mono bg-slate-100 px-1 py-0.5 rounded">{validationSummary.fileName}</code> into EduPulse AI.
+                {importMode === 'merge' ? (
+                  <>
+                    You are adding <strong>{validationSummary.validStudents.length} validated student records</strong> into the available cohort slots (up to 100 max capacity) from <code className="font-mono bg-slate-100 px-1 py-0.5 rounded">{validationSummary.fileName}</code>.
+                  </>
+                ) : (
+                  <>
+                    You are replacing the entire active cohort with <strong>{validationSummary.validStudents.length} validated student records</strong> from <code className="font-mono bg-slate-100 px-1 py-0.5 rounded">{validationSummary.fileName}</code>.
+                  </>
+                )}
               </p>
             </div>
 
-            <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs text-slate-600 space-y-1">
+            <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs text-slate-600 space-y-1.5">
+              <p className="flex justify-between items-center">
+                <span>Ingestion Mode:</span>
+                <span className={`px-2 py-0.5 rounded text-[11px] font-bold ${
+                  importMode === 'merge'
+                    ? 'bg-indigo-100 text-indigo-800'
+                    : 'bg-amber-100 text-amber-800'
+                }`}>
+                  {importMode === 'merge' ? 'Append & Merge into Slots' : 'Replace Entire Cohort'}
+                </span>
+              </p>
               <p className="flex justify-between">
                 <span>Valid records to apply:</span>
                 <strong className="text-emerald-700">{validationSummary.validStudents.length}</strong>
@@ -790,14 +932,29 @@ export const DataImportTab: React.FC<DataImportTabProps> = ({
                   <strong className="text-rose-700">{validationSummary.invalidRowsCount}</strong>
                 </p>
               )}
-              <p className="flex justify-between">
-                <span>Current active records replaced:</span>
-                <strong className="text-slate-800">{totalActiveStudents}</strong>
-              </p>
+              {importMode === 'merge' ? (
+                <p className="flex justify-between">
+                  <span>Existing active cohort preserved:</span>
+                  <strong className="text-slate-800">{totalActiveStudents} students</strong>
+                </p>
+              ) : (
+                <p className="flex justify-between">
+                  <span>Current active records replaced:</span>
+                  <strong className="text-slate-800">{totalActiveStudents} students</strong>
+                </p>
+              )}
+              <div className="pt-1.5 border-t border-slate-200 flex justify-between items-center text-[11px]">
+                <span className="font-semibold text-slate-700">Projected Cohort Size:</span>
+                <span className="font-bold text-purple-700">
+                  {importMode === 'merge'
+                    ? `${Math.min(100, totalActiveStudents + validationSummary.validStudents.length)} / 100 Slots`
+                    : `${Math.min(100, validationSummary.validStudents.length)} / 100 Slots`}
+                </span>
+              </div>
             </div>
 
             <p className="text-[11px] text-slate-400 leading-normal">
-              All overview KPIs, charts, priority tables, and student directories will immediately reflect this new cohort. You can restore the demo dataset anytime.
+              All overview KPIs, charts, priority tables, and student directories will immediately reflect this cohort update. You can restore the demo dataset anytime.
             </p>
 
             {/* Supabase Persistence Option */}
