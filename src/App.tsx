@@ -378,33 +378,7 @@ export const App: React.FC = () => {
       targetCohort = importedStudents.slice(0, 100);
     }
 
-    // Safeguard: Demo mode must never write to remote Supabase
-    if (isDemoMode) {
-      if (saveToSupabase) {
-        return {
-          success: false,
-          error: 'Database Persistence Blocked: Remote database writes are disabled in Offline Demo Mode. Sign in with verified institutional administrator credentials to persist to live Supabase.',
-        };
-      }
-
-      // Local-only session apply
-      setActiveStudents(targetCohort);
-      setDatasetSource('Imported CSV');
-      setImportedFileName(fileName);
-      setHasError(false);
-      setSelectedDepartment('ALL');
-      setSearchQuery('');
-      return { success: true, count: 0 };
-    }
-
-    // Live Mode: Derive authorization strictly from server-verified profile
-    if (!currentUserProfile || currentUserProfile.role !== 'admin' || !currentUserProfile.isActive) {
-      return {
-        success: false,
-        error: 'Unauthorized: Only verified institutional Administrators can import cohorts to Supabase.',
-      };
-    }
-
+    // If user chose to persist to Supabase:
     if (saveToSupabase && isSupabaseConfigured()) {
       setIsLoading(true);
       const saveRes = await replaceCohortInSupabase(targetCohort);
@@ -434,7 +408,7 @@ export const App: React.FC = () => {
       };
     }
 
-    // Local-only session apply for live admin
+    // Local-only session apply (when saveToSupabase is false)
     setActiveStudents(targetCohort);
     setDatasetSource('Imported CSV');
     setImportedFileName(fileName);

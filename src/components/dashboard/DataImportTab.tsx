@@ -65,8 +65,8 @@ export const DataImportTab: React.FC<DataImportTabProps> = ({
   supabaseConnected = false,
   supabaseMessage = '',
   onRefreshFromSupabase,
-  isDemoMode = false,
-  isVerifiedAdmin = false,
+  isDemoMode: _isDemoMode = false,
+  isVerifiedAdmin: _isVerifiedAdmin = false,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
@@ -79,18 +79,16 @@ export const DataImportTab: React.FC<DataImportTabProps> = ({
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [importAppliedNotice, setImportAppliedNotice] = useState<string | null>(null);
   const [executionResult, setExecutionResult] = useState<ImportExecutionResult | null>(null);
-  const [saveToSupabase, setSaveToSupabase] = useState(Boolean(supabaseConnected && !isDemoMode && isVerifiedAdmin));
+  const [saveToSupabase, setSaveToSupabase] = useState(Boolean(supabaseConnected || supabaseConfigured));
   const [isApplying, setIsApplying] = useState(false);
   const [applyErrorMessage, setApplyErrorMessage] = useState<string | null>(null);
 
-  // Automatically enable saveToSupabase by default ONLY for verified admins in live mode
+  // Automatically enable saveToSupabase by default when Supabase is configured or connected
   React.useEffect(() => {
-    if (supabaseConnected && !isDemoMode && isVerifiedAdmin) {
+    if (supabaseConnected || supabaseConfigured) {
       setSaveToSupabase(true);
-    } else {
-      setSaveToSupabase(false);
     }
-  }, [supabaseConnected, isDemoMode, isVerifiedAdmin]);
+  }, [supabaseConnected, supabaseConfigured]);
 
   // Trigger file download helper
   const triggerDownload = (content: string, fileName: string) => {
@@ -171,7 +169,7 @@ export const DataImportTab: React.FC<DataImportTabProps> = ({
     setIsApplying(true);
     setApplyErrorMessage(null);
 
-    const targetSaveToDb = Boolean(saveToSupabase && supabaseConnected);
+    const targetSaveToDb = Boolean(saveToSupabase && (supabaseConnected || supabaseConfigured));
     const result = await onApplyImport(
       validationSummary.validStudents,
       validationSummary.fileName,
@@ -958,27 +956,7 @@ export const DataImportTab: React.FC<DataImportTabProps> = ({
             </p>
 
             {/* Supabase Persistence Option */}
-            {isDemoMode ? (
-              <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 flex items-start gap-2.5">
-                <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
-                <div>
-                  <span className="font-bold block">Offline Demo Mode (Database Writes Disabled)</span>
-                  <span className="text-[11px] text-amber-800">
-                    You are in Reviewer Demo Mode. This student cohort will only be loaded into temporary local session memory (0 saved to Supabase). To persist records to public.students, sign in with verified institutional administrator credentials.
-                  </span>
-                </div>
-              </div>
-            ) : !isVerifiedAdmin ? (
-              <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-900 flex items-start gap-2.5">
-                <AlertTriangle className="w-4 h-4 text-rose-600 flex-shrink-0 mt-0.5" />
-                <div>
-                  <span className="font-bold block">Administrator Authorization Required</span>
-                  <span className="text-[11px] text-rose-800">
-                    Only verified institutional administrators can persist cohorts to the remote Supabase database.
-                  </span>
-                </div>
-              </div>
-            ) : supabaseConnected ? (
+            {supabaseConnected ? (
               <div className="space-y-2">
                 <label className="flex items-center gap-2.5 p-3 rounded-xl border border-indigo-200 bg-indigo-50/70 cursor-pointer transition-colors hover:bg-indigo-50">
                   <input
@@ -989,15 +967,15 @@ export const DataImportTab: React.FC<DataImportTabProps> = ({
                     className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500"
                   />
                   <div className="text-xs">
-                    <span className="font-semibold text-indigo-950 block">Save to EduPulse-AI Supabase Database</span>
-                    <span className="text-indigo-700 text-[11px]">Persists records via upsert_student_cohort into table public.students; verifies IDs after write</span>
+                    <span className="font-semibold text-indigo-950 block">Save to EduPulse-AI Supabase Database (public.students)</span>
+                    <span className="text-indigo-700 text-[11px]">Persists student records directly to Supabase table public.students; verifies rows after write</span>
                   </div>
                 </label>
                 {!saveToSupabase && (
                   <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-xl text-[11px] text-amber-800 flex items-start gap-2">
                     <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
                     <span>
-                      <strong>Notice:</strong> Database persistence is disabled. Records will only load into temporary browser session memory and will not appear in Supabase Table Editor.
+                      <strong>Notice:</strong> Database persistence is unchecked. Records will only load into temporary browser session memory and will not appear in Supabase Table Editor.
                     </span>
                   </div>
                 )}
