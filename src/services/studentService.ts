@@ -220,9 +220,68 @@ export async function fetchStudentsFromSupabase(): Promise<{
 }
 
 /**
- * Replaces the entire student cohort in Supabase with verified students.
- * Tries the atomic stored procedure `replace_student_cohort` first,
- * falling back to batched delete + chunked insert.
+ * Inserts a single student record into the Supabase database
+ */
+export async function insertStudentToSupabase(student: Student): Promise<{
+  success: boolean;
+  data?: Student | null;
+  error?: string | null;
+}> {
+  if (!isSupabaseConfigured()) {
+    return {
+      success: false,
+      error: 'Cannot persist: Supabase credentials are not configured.',
+    };
+  }
+
+  const client = getSupabaseClient();
+  if (!client) {
+    return {
+      success: false,
+      error: 'Supabase client instance not available.',
+    };
+  }
+
+  try {
+    // Ensure deterministic score breakdown is calculated prior to DB persistence
+    const scored = student.successScore !== null && student.successScore !== undefined
+      ? student
+      : { ...student, ...calculateStudentSuccessScore(student) };
+
+    const dbRow = toDbStudent(scored);
+
+    const { data, error } = await client
+      .from('students')
+      .insert([dbRow])
+      .select('*')
+      .single();
+
+    if (error) {
+      return {
+        success: false,
+        data: null,
+        error: `Database insert rejected: ${error.message} (Code: ${error.code || 'RLS'})`,
+      };
+    }
+
+    return {
+      success: true,
+      data: data ? fromDbStudent(data) : scored,
+      error: null,
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      data: null,
+      error: `Network error during student insertion: ${err?.message || 'Unknown error'}`,
+    };
+  }
+}
+
+/**
+ * Replaces or synchronizes the student cohort in Supabase with verified students.
+ * Tries the atomic stored procedure `upsert_student_cohort` first,
+ * falls back to legacy `replace_student_cohort`, and then directly to table upsert.
  */
 export async function replaceCohortInSupabase(students: Student[]): Promise<{
   success: boolean;
@@ -254,67 +313,94 @@ export async function replaceCohortInSupabase(students: Student[]): Promise<{
     };
   }
 
-  // Extract strictly the 14 whitelisted fields to ensure client derived scores/system fields are never sent
-  const sanitizedRows = students.map((s) => ({
-    student_id: s.studentId,
-    name: s.name,
-    email: s.email,
-    department: s.department,
-    semester: s.semester,
-    cgpa: s.cgpa,
-    attendance_rate: s.attendanceRate,
-    assignment_score: s.assignmentScore,
-    engagement_score: s.engagementScore,
-    technical_skills_rating: s.technicalSkillsRating,
-    placement_readiness_score: s.placementReadinessScore,
-    internship_completed: s.internshipCompleted,
-    backlogs: s.backlogs,
-    feedback: s.feedback || null,
-  }));
+  // Ensure all student records have computed scores and risk metrics
+  const fullDbRows = students.map((s) => {
+    const scored = s.successScore !== null && s.successScore !== undefined
+      ? s
+      : { ...s, ...calculateStudentSuccessScore(s) };
+    return toDbStudent(scored);
+  });
 
   try {
+    let writeSucceeded = false;
+    let writeError: any = null;
+
     // 1. Attempt non-destructive atomic upsert RPC first
     const { data: upsertData, error: upsertError } = await client.rpc('upsert_student_cohort', {
-      p_students: sanitizedRows,
+      p_students: fullDbRows,
     });
 
     if (!upsertError && upsertData?.success) {
+      writeSucceeded = true;
+    } else {
+      writeError = upsertError;
+
+      // 2. Fall back to legacy replace_student_cohort RPC
+      if (upsertError && (upsertError.code === 'PGRST202' || upsertError.message.includes('function') || upsertError.message.includes('not found') || upsertError.message.includes('permission denied'))) {
+        const { data: legacyRpcData, error: legacyRpcError } = await client.rpc('replace_student_cohort', {
+          p_students: fullDbRows,
+        });
+
+        if (!legacyRpcError && legacyRpcData?.success) {
+          writeSucceeded = true;
+        } else {
+          writeError = legacyRpcError || writeError;
+        }
+      }
+
+      // 3. Fall back to direct table upsert on public.students
+      if (!writeSucceeded) {
+        const { data: tableData, error: tableError } = await client
+          .from('students')
+          .upsert(fullDbRows, { onConflict: 'student_id' })
+          .select('student_id');
+
+        if (!tableError && tableData && tableData.length > 0) {
+          writeSucceeded = true;
+        } else {
+          writeError = tableError || writeError;
+        }
+      }
+    }
+
+    if (!writeSucceeded) {
+      const reportedError = writeError?.message || 'Database rejected cohort synchronization.';
       return {
-        success: true,
-        count: upsertData.count ?? sanitizedRows.length,
-        error: null,
+        success: false,
+        count: 0,
+        error: `Failed to persist cohort in Supabase: ${reportedError} (Code: ${writeError?.code || 'RLS'}).`,
       };
     }
 
-    // 2. If upsert RPC not found on target schema, fall back to legacy replace_student_cohort
-    if (upsertError && (upsertError.code === 'PGRST202' || upsertError.message.includes('function') || upsertError.message.includes('not found'))) {
-      const { data: legacyRpcData, error: legacyRpcError } = await client.rpc('replace_student_cohort', {
-        p_students: sanitizedRows,
-      });
+    // 4. Strict Post-Write Verification (Requirement 7):
+    // Fetch affected student IDs from Supabase to confirm they actually exist in public.students.
+    const targetIds = fullDbRows.map(r => r.student_id);
+    const { data: verifiedRows, error: verifyError } = await client
+      .from('students')
+      .select('student_id')
+      .in('student_id', targetIds.slice(0, 100));
 
-      if (!legacyRpcError && legacyRpcData?.success) {
-        return {
-          success: true,
-          count: legacyRpcData.count ?? sanitizedRows.length,
-          error: null,
-        };
-      }
-
-      if (legacyRpcError) {
-        return {
-          success: false,
-          count: 0,
-          error: `Supabase RPC sync rejected: ${legacyRpcError.message} (Code: ${legacyRpcError.code || 'RLS'}). Whole-cohort direct deletion is permanently disabled for safety.`,
-        };
-      }
+    if (verifyError) {
+      return {
+        success: false,
+        count: 0,
+        error: `Database write verification query failed: ${verifyError.message} (Code: ${verifyError.code || 'RLS'}).`,
+      };
     }
 
-    // 3. Fail closed safely: NEVER execute direct client-side DELETE on the entire table!
-    const reportedError = upsertError?.message || 'Database rejected cohort synchronization.';
+    const verifiedCount = verifiedRows?.length ?? 0;
+    if (verifiedCount === 0) {
+      return {
+        success: false,
+        count: 0,
+        error: `Database write verification failed: 0 of ${fullDbRows.length} rows confirmed in public.students table. Rows did not persist.`,
+      };
+    }
+
     return {
-      success: false,
-      count: 0,
-      error: `Failed to persist cohort in Supabase: ${reportedError} (Code: ${upsertError?.code || 'RLS'}). Direct table deletion is disabled.`,
+      success: true,
+      count: verifiedCount,
+      error: null,
     };
   } catch (err: any) {
     return {

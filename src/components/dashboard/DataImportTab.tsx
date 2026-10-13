@@ -24,12 +24,22 @@ import {
 } from '../../utils/csvValidator';
 import { SCORING_DISCLAIMER } from '../../utils/scoringEngine';
 
+interface ImportExecutionResult {
+  fileName: string;
+  totalRows: number;
+  validRows: number;
+  rejectedRows: number;
+  savedRows: number;
+  persistedToSupabase: boolean;
+  timestamp: string;
+}
+
 interface DataImportTabProps {
   onApplyImport: (
     importedStudents: Student[],
     fileName: string,
     saveToSupabase: boolean
-  ) => Promise<{ success: boolean; error?: string | null }> | { success: boolean; error?: string | null };
+  ) => Promise<{ success: boolean; count?: number; error?: string | null }> | { success: boolean; count?: number; error?: string | null };
   datasetSource: string;
   totalActiveStudents: number;
   onRestoreSyntheticDemo: () => void;
@@ -57,9 +67,17 @@ export const DataImportTab: React.FC<DataImportTabProps> = ({
   const [errorDownloadSuccess, setErrorDownloadSuccess] = useState(false);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [importAppliedNotice, setImportAppliedNotice] = useState<string | null>(null);
+  const [executionResult, setExecutionResult] = useState<ImportExecutionResult | null>(null);
   const [saveToSupabase, setSaveToSupabase] = useState(supabaseConnected);
   const [isApplying, setIsApplying] = useState(false);
   const [applyErrorMessage, setApplyErrorMessage] = useState<string | null>(null);
+
+  // Automatically enable saveToSupabase by default whenever Supabase connects
+  React.useEffect(() => {
+    if (supabaseConnected) {
+      setSaveToSupabase(true);
+    }
+  }, [supabaseConnected]);
 
   // Trigger file download helper
   const triggerDownload = (content: string, fileName: string) => {
@@ -148,15 +166,32 @@ export const DataImportTab: React.FC<DataImportTabProps> = ({
 
     const destinationLabel = targetSaveToDb 
       ? 'into EduPulse-AI Supabase Database (public.students)' 
-      : 'into active local cohort';
+      : 'into active local cohort (Session Only)';
 
-    setImportAppliedNotice(`Successfully loaded ${validationSummary.validStudents.length} verified student records ${destinationLabel} from "${validationSummary.fileName}".`);
+    const savedCount = targetSaveToDb ? (result?.count ?? 0) : 0;
+
+    setExecutionResult({
+      fileName: validationSummary.fileName,
+      totalRows: validationSummary.totalRows,
+      validRows: validationSummary.validRowsCount,
+      rejectedRows: validationSummary.invalidRowsCount,
+      savedRows: savedCount,
+      persistedToSupabase: targetSaveToDb && savedCount > 0,
+      timestamp: new Date().toLocaleTimeString(),
+    });
+
+    if (targetSaveToDb && savedCount > 0) {
+      setImportAppliedNotice(`Successfully saved and verified ${savedCount} student records ${destinationLabel} from "${validationSummary.fileName}".`);
+    } else {
+      setImportAppliedNotice(`Loaded ${validationSummary.validStudents.length} verified student records into active local session (0 saved to database) from "${validationSummary.fileName}".`);
+    }
     setShowConfirmModal(false);
   };
 
   const handleResetStaging = () => {
     setValidationSummary(null);
     setImportAppliedNotice(null);
+    setExecutionResult(null);
     setApplyErrorMessage(null);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
@@ -250,8 +285,128 @@ export const DataImportTab: React.FC<DataImportTabProps> = ({
         </div>
       </div>
 
+      {/* Supabase / Write Error Banner */}
+      {applyErrorMessage && (
+        <div className="p-4 bg-rose-50 border border-rose-300 rounded-2xl flex items-start justify-between gap-3 text-rose-950 text-xs animate-in fade-in duration-200">
+          <div className="flex items-start gap-3">
+            <div className="p-2 rounded-xl bg-rose-100 text-rose-700 flex-shrink-0 mt-0.5">
+              <AlertTriangle className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="font-bold text-sm text-rose-900">Database Operation Rejected</span>
+                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-200 text-rose-900">
+                  Supabase Error
+                </span>
+              </div>
+              <p className="mt-1 font-mono text-[11px] text-rose-800 bg-white/80 p-2.5 rounded-xl border border-rose-200 break-all select-all">
+                {applyErrorMessage}
+              </p>
+              <p className="mt-1.5 text-xs text-rose-700 font-medium">
+                EduPulse AI did NOT silently fall back to demo data. No records were written to the database.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => setApplyErrorMessage(null)}
+            className="text-rose-600 hover:text-rose-800 font-bold text-xs px-2 py-1 rounded-lg hover:bg-rose-100 transition-colors"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
+      {/* Verified Import Execution Results Card */}
+      {executionResult && (
+        <div className="p-5 bg-white border border-slate-200/90 rounded-2xl shadow-xs space-y-4 animate-in fade-in duration-200">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-slate-100">
+            <div className="flex items-center gap-2.5">
+              <div className="p-2 rounded-xl bg-emerald-50 text-emerald-600">
+                <CheckCircle2 className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                  <span>Verified Import Execution Summary</span>
+                  <span className="text-[10px] font-mono text-slate-400 font-normal">[{executionResult.timestamp}]</span>
+                </h3>
+                <p className="text-xs text-slate-500">
+                  File: <code className="font-mono font-semibold text-slate-700">{executionResult.fileName}</code>
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 self-start sm:self-auto">
+              <span className={`px-2.5 py-1 rounded-full text-xs font-bold border ${
+                executionResult.persistedToSupabase 
+                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200' 
+                  : 'bg-amber-50 text-amber-800 border-amber-200'
+              }`}>
+                {executionResult.persistedToSupabase ? '✓ Persisted in Supabase (public.students)' : '⚠ Session Only (0 Saved to Database)'}
+              </span>
+              <button
+                onClick={() => setExecutionResult(null)}
+                className="text-slate-400 hover:text-slate-600 text-xs px-1.5 py-0.5"
+              >
+                ×
+              </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="p-3 bg-slate-50 rounded-xl border border-slate-200/80">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">1. Total CSV Rows</span>
+              <span className="text-xl font-extrabold text-slate-800 mt-1 block">{executionResult.totalRows}</span>
+              <span className="text-[11px] text-slate-500">Supplied in file</span>
+            </div>
+
+            <div className="p-3 bg-emerald-50/70 rounded-xl border border-emerald-200/80">
+              <span className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider block">2. Valid Rows</span>
+              <span className="text-xl font-extrabold text-emerald-800 mt-1 block">{executionResult.validRows}</span>
+              <span className="text-[11px] text-emerald-700">Passed all schema rules</span>
+            </div>
+
+            <div className={`p-3 rounded-xl border ${
+              executionResult.rejectedRows > 0 
+                ? 'bg-rose-50/70 border-rose-200/80' 
+                : 'bg-slate-50 border-slate-200/80'
+            }`}>
+              <span className={`text-[10px] font-bold uppercase tracking-wider block ${
+                executionResult.rejectedRows > 0 ? 'text-rose-600' : 'text-slate-400'
+              }`}>3. Rejected Rows</span>
+              <span className={`text-xl font-extrabold mt-1 block ${
+                executionResult.rejectedRows > 0 ? 'text-rose-800' : 'text-slate-800'
+              }`}>{executionResult.rejectedRows}</span>
+              <span className={`text-[11px] ${
+                executionResult.rejectedRows > 0 ? 'text-rose-700' : 'text-slate-500'
+              }`}>{executionResult.rejectedRows > 0 ? 'Excluded from platform' : 'Zero validation errors'}</span>
+            </div>
+
+            <div className={`p-3 rounded-xl border ${
+              executionResult.persistedToSupabase 
+                ? 'bg-emerald-50/70 border-emerald-200/80' 
+                : 'bg-amber-50/70 border-amber-200/80'
+            }`}>
+              <span className={`text-[10px] font-bold uppercase tracking-wider block ${
+                executionResult.persistedToSupabase ? 'text-emerald-700' : 'text-amber-800'
+              }`}>4. Saved to Supabase</span>
+              <span className={`text-xl font-extrabold mt-1 block ${
+                executionResult.persistedToSupabase ? 'text-emerald-900' : 'text-amber-900'
+              }`}>
+                {executionResult.persistedToSupabase ? `${executionResult.savedRows} Confirmed` : '0 (Local Only)'}
+              </span>
+              <span className={`text-[11px] font-medium ${
+                executionResult.persistedToSupabase ? 'text-emerald-700' : 'text-amber-700'
+              }`}>
+                {executionResult.persistedToSupabase 
+                  ? 'Confirmed in public.students' 
+                  : `${executionResult.validRows} rows in session memory only`}
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Applied Notice */}
-      {importAppliedNotice && (
+      {importAppliedNotice && !executionResult && (
         <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-center justify-between gap-3 text-emerald-900 text-xs animate-in fade-in duration-200">
           <div className="flex items-center gap-2.5">
             <CheckCircle2 className="w-5 h-5 text-emerald-600 flex-shrink-0" />
@@ -640,20 +795,37 @@ export const DataImportTab: React.FC<DataImportTabProps> = ({
             </p>
 
             {/* Supabase Persistence Option */}
-            {supabaseConnected && (
-              <label className="flex items-center gap-2.5 p-3 rounded-xl border border-indigo-200 bg-indigo-50/70 cursor-pointer transition-colors hover:bg-indigo-50">
-                <input
-                  type="checkbox"
-                  checked={saveToSupabase}
-                  onChange={(e) => setSaveToSupabase(e.target.checked)}
-                  disabled={isApplying}
-                  className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500"
-                />
-                <div className="text-xs">
-                  <span className="font-semibold text-indigo-950 block">Save to EduPulse-AI Supabase Database</span>
-                  <span className="text-indigo-700 text-[11px]">Atomically updates table public.students with verified records</span>
-                </div>
-              </label>
+            {supabaseConnected ? (
+              <div className="space-y-2">
+                <label className="flex items-center gap-2.5 p-3 rounded-xl border border-indigo-200 bg-indigo-50/70 cursor-pointer transition-colors hover:bg-indigo-50">
+                  <input
+                    type="checkbox"
+                    checked={saveToSupabase}
+                    onChange={(e) => setSaveToSupabase(e.target.checked)}
+                    disabled={isApplying}
+                    className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500"
+                  />
+                  <div className="text-xs">
+                    <span className="font-semibold text-indigo-950 block">Save to EduPulse-AI Supabase Database</span>
+                    <span className="text-indigo-700 text-[11px]">Persists records into table public.students; verifies IDs after write</span>
+                  </div>
+                </label>
+                {!saveToSupabase && (
+                  <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-xl text-[11px] text-amber-800 flex items-start gap-2">
+                    <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
+                    <span>
+                      <strong>Notice:</strong> Database persistence is disabled. Records will only load into temporary browser session memory and will not appear in Supabase Table Editor.
+                    </span>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="p-2.5 bg-slate-100 border border-slate-200 rounded-xl text-[11px] text-slate-600 flex items-start gap-2">
+                <Info className="w-4 h-4 text-slate-500 flex-shrink-0 mt-0.5" />
+                <span>
+                  Supabase database is currently not connected ({supabaseMessage || 'offline'}). Records will load into local session memory.
+                </span>
+              </div>
             )}
 
             {/* Error Notice (if save failed) */}
@@ -669,10 +841,7 @@ export const DataImportTab: React.FC<DataImportTabProps> = ({
 
             <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
               <button
-                onClick={() => {
-                  setShowConfirmModal(false);
-                  setApplyErrorMessage(null);
-                }}
+                onClick={() => setShowConfirmModal(false)}
                 disabled={isApplying}
                 className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-xl transition-colors disabled:opacity-50"
               >

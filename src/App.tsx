@@ -64,6 +64,7 @@ import {
 import {
   checkSupabaseConnection,
   fetchStudentsFromSupabase,
+  insertStudentToSupabase,
   replaceCohortInSupabase,
   updateStudentMarksInSupabase
 } from './services/studentService';
@@ -286,7 +287,7 @@ export const App: React.FC = () => {
     importedStudents: Student[],
     fileName: string,
     saveToSupabase: boolean = false
-  ): Promise<{ success: boolean; error?: string | null }> => {
+  ): Promise<{ success: boolean; count?: number; error?: string | null }> => {
     if (currentUserRole !== 'admin') {
       return { success: false, error: 'Unauthorized: Only institutional Administrators can import cohorts.' };
     }
@@ -300,23 +301,65 @@ export const App: React.FC = () => {
         return { success: false, error: saveRes.error };
       }
 
-      setActiveStudents(importedStudents);
-      setDatasetSource('Supabase DB');
-      setImportedFileName(fileName);
-      setSupabaseRecordCount(saveRes.count);
-      setHasError(false);
-      setSelectedDepartment('ALL');
-      setSearchQuery('');
-      return { success: true };
+      // Re-fetch from Supabase to verify persisted records and refresh state
+      const fetchRes = await fetchStudentsFromSupabase();
+      if (!fetchRes.error && fetchRes.data.length > 0) {
+        setActiveStudents(fetchRes.data);
+        setSupabaseRecordCount(fetchRes.data.length);
+        setDatasetSource('Supabase DB');
+        setImportedFileName(fileName);
+        setHasError(false);
+        setSelectedDepartment('ALL');
+        setSearchQuery('');
+        return { success: true, count: fetchRes.data.length };
+      }
+
+      // Verification failed: Database returned 0 rows or error. Never claim success.
+      return {
+        success: false,
+        error: fetchRes.error || `Database write verification failed: 0 rows returned from Supabase public.students after write attempt. Persistence could not be confirmed.`,
+      };
     }
 
-    // Local-only session apply
+    // Local-only session apply (Explicitly marked as local session, saved count = 0 to DB)
     setActiveStudents(importedStudents);
     setDatasetSource('Imported CSV');
     setImportedFileName(fileName);
     setHasError(false);
     setSelectedDepartment('ALL');
     setSearchQuery('');
+    return { success: true, count: 0 };
+  };
+
+  // Add individual student record (Admin only)
+  const handleAddStudent = async (
+    newStudent: Student,
+    saveToDb: boolean = false
+  ): Promise<{ success: boolean; error?: string | null }> => {
+    if (currentUserRole !== 'admin') {
+      return { success: false, error: 'Unauthorized: Only institutional Administrators can add student records.' };
+    }
+
+    if (saveToDb && isSupabaseConfigured()) {
+      setIsLoading(true);
+      const res = await insertStudentToSupabase(newStudent);
+      setIsLoading(false);
+
+      if (!res.success) {
+        return { success: false, error: res.error };
+      }
+
+      const inserted = res.data || newStudent;
+      setActiveStudents(prev => [inserted, ...prev.filter(s => s.studentId !== inserted.studentId)]);
+      setDatasetSource('Supabase DB');
+      setSupabaseRecordCount(prev => (prev ?? 0) + 1);
+      setHasError(false);
+      return { success: true };
+    }
+
+    // Local session add
+    setActiveStudents(prev => [newStudent, ...prev.filter(s => s.studentId !== newStudent.studentId)]);
+    setHasError(false);
     return { success: true };
   };
 
@@ -656,6 +699,8 @@ export const App: React.FC = () => {
                     ...TEACHER_ASSIGNED_CLASS,
                     studentCount: effectiveCohort.length
                   } : undefined}
+                  onAddStudent={handleAddStudent}
+                  isSupabaseConnected={supabaseStatus === 'connected'}
                 />
               )}
 

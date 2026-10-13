@@ -4,14 +4,16 @@ import {
   ArrowUpDown, 
   SlidersHorizontal, 
   CheckCircle, 
-  ExternalLink,
+  ExternalLink, 
   RotateCcw,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  UserPlus
 } from 'lucide-react';
 import { Student } from '../../types/student';
 import { EmptyState } from '../common/EmptyState';
 import { SyntheticBadge } from '../common/SyntheticBadge';
+import { AddStudentModal } from './AddStudentModal';
 
 interface StudentsTabProps {
   students: Student[];
@@ -31,6 +33,8 @@ interface StudentsTabProps {
     section: string;
     studentCount: number;
   };
+  onAddStudent?: (student: Student, saveToDb: boolean) => Promise<{ success: boolean; error?: string | null }>;
+  isSupabaseConnected?: boolean;
 }
 
 type SortField = 'studentId' | 'name' | 'cgpa' | 'attendanceRate' | 'successScore';
@@ -47,15 +51,18 @@ export const StudentsTab: React.FC<StudentsTabProps> = ({
   datasetSource,
   userRole,
   assignedClassInfo,
+  onAddStudent,
+  isSupabaseConnected,
 }) => {
   const [academicRiskFilter, setAcademicRiskFilter] = useState<string>('ALL');
   const [placementRiskFilter, setPlacementRiskFilter] = useState<string>('ALL');
   const [sortField, setSortField] = useState<SortField>('studentId');
   const [sortOrder, setSortOrder] = useState<SortOrder>('asc');
+  const [isAddModalOpen, setIsAddModalOpen] = useState<boolean>(false);
 
-  // Pagination state (default: 25 per page for high performance with 100, 500, 1000+ students)
+  // Pagination state (default: 20 per page for initial dashboard view, supports up to 100 students)
   const [currentPage, setCurrentPage] = useState<number>(1);
-  const [pageSize, setPageSize] = useState<number | 'ALL'>(25);
+  const [pageSize, setPageSize] = useState<number | 'ALL'>(20);
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -112,16 +119,21 @@ export const StudentsTab: React.FC<StudentsTabProps> = ({
     setCurrentPage(1);
   }, [searchQuery, selectedDepartment, academicRiskFilter, placementRiskFilter]);
 
-  const totalFiltered = filteredStudents.length;
+  // Cap maximum supported displayable students to 100
+  const cappedStudents = useMemo(() => {
+    return filteredStudents.slice(0, 100);
+  }, [filteredStudents]);
+
+  const totalFiltered = cappedStudents.length;
   const effectivePageSize = pageSize === 'ALL' ? totalFiltered : pageSize;
   const totalPages = pageSize === 'ALL' || totalFiltered === 0 ? 1 : Math.ceil(totalFiltered / effectivePageSize);
   const activePage = Math.min(Math.max(currentPage, 1), totalPages);
 
   const displayedStudents = useMemo(() => {
-    if (pageSize === 'ALL') return filteredStudents;
+    if (pageSize === 'ALL') return cappedStudents;
     const startIndex = (activePage - 1) * effectivePageSize;
-    return filteredStudents.slice(startIndex, startIndex + effectivePageSize);
-  }, [filteredStudents, pageSize, activePage, effectivePageSize]);
+    return cappedStudents.slice(startIndex, startIndex + effectivePageSize);
+  }, [cappedStudents, pageSize, activePage, effectivePageSize]);
 
   const handleResetFilters = () => {
     onSearchChange('');
@@ -228,6 +240,17 @@ export const StudentsTab: React.FC<StudentsTabProps> = ({
                 Reset
               </button>
             )}
+
+            {userRole === 'admin' && onAddStudent && (
+              <button
+                onClick={() => setIsAddModalOpen(true)}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl shadow-xs transition-colors cursor-pointer"
+                title="Add authorized student record to platform / Supabase"
+              >
+                <UserPlus className="w-3.5 h-3.5" />
+                Add Student
+              </button>
+            )}
           </div>
         </div>
 
@@ -236,8 +259,8 @@ export const StudentsTab: React.FC<StudentsTabProps> = ({
           <div className="flex items-center gap-2">
             <SlidersHorizontal className="w-3.5 h-3.5 text-slate-400" />
             <span>
-              Showing <strong className="text-slate-800">{filteredStudents.length}</strong> of{' '}
-              <strong className="text-slate-800">{students.length}</strong> active records ({datasetSource})
+              Showing <strong className="text-slate-800">{displayedStudents.length}</strong> of{' '}
+              <strong className="text-slate-800">{totalFiltered}</strong> students ({datasetSource}) • Max view: 100
             </span>
           </div>
           {datasetSource === 'Synthetic Demo' ? (
@@ -423,6 +446,37 @@ export const StudentsTab: React.FC<StudentsTabProps> = ({
             </table>
           </div>
 
+          {/* Expand / Load More Action Banner (when more records are available) */}
+          {totalFiltered > displayedStudents.length && pageSize !== 'ALL' && (
+            <div className="px-5 py-3 bg-indigo-50/70 border-t border-indigo-100 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5 text-xs text-indigo-950">
+              <div className="flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse" />
+                <span>
+                  Showing <strong>{displayedStudents.length}</strong> of <strong>{totalFiltered}</strong> students (platform supports up to 100).
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                {typeof pageSize === 'number' && pageSize < 100 && totalFiltered > pageSize && (
+                  <button
+                    onClick={() => {
+                      const nextSize = Math.min(100, Math.min(totalFiltered, pageSize + 20));
+                      setPageSize(nextSize);
+                    }}
+                    className="px-3 py-1.5 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <span>Load More (+20)</span>
+                  </button>
+                )}
+                <button
+                  onClick={() => setPageSize(Math.min(totalFiltered, 100))}
+                  className="px-3 py-1.5 text-xs font-semibold text-indigo-700 bg-white hover:bg-indigo-50 border border-indigo-200 rounded-lg transition-colors cursor-pointer"
+                >
+                  <span>View All ({totalFiltered})</span>
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Table Footer with Pagination */}
           <div className="p-4 bg-slate-50/50 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-500">
             <div className="flex items-center gap-2">
@@ -470,14 +524,25 @@ export const StudentsTab: React.FC<StudentsTabProps> = ({
                 }}
                 className="px-2 py-1 text-xs bg-white border border-slate-200 rounded-lg text-slate-700 font-medium focus:outline-none focus:ring-1 focus:ring-indigo-500"
               >
-                <option value={25}>25</option>
+                <option value={20}>20 (Initial View)</option>
                 <option value={50}>50</option>
-                <option value={100}>100</option>
+                <option value={100}>100 (Max View)</option>
                 <option value="ALL">All ({totalFiltered})</option>
               </select>
             </div>
           </div>
         </div>
+      )}
+
+      {/* Add Student Modal */}
+      {isAddModalOpen && onAddStudent && (
+        <AddStudentModal
+          isOpen={isAddModalOpen}
+          onClose={() => setIsAddModalOpen(false)}
+          onSaveStudent={onAddStudent}
+          departments={departments}
+          isSupabaseConnected={Boolean(isSupabaseConnected)}
+        />
       )}
     </div>
   );
