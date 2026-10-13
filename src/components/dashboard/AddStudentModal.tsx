@@ -9,6 +9,8 @@ interface AddStudentModalProps {
   onSaveStudent: (student: Student, saveToDb: boolean) => Promise<{ success: boolean; error?: string | null }>;
   departments: string[];
   isSupabaseConnected: boolean;
+  isDemoMode?: boolean;
+  isVerifiedAdmin?: boolean;
 }
 
 export const AddStudentModal: React.FC<AddStudentModalProps> = ({
@@ -17,6 +19,8 @@ export const AddStudentModal: React.FC<AddStudentModalProps> = ({
   onSaveStudent,
   departments,
   isSupabaseConnected,
+  isDemoMode = false,
+  isVerifiedAdmin = false,
 }) => {
   const availableDepts = useMemo(() => {
     const list = departments.filter((d) => d !== 'ALL');
@@ -37,11 +41,12 @@ export const AddStudentModal: React.FC<AddStudentModalProps> = ({
   const [internshipCompleted, setInternshipCompleted] = useState(false);
   const [backlogs, setBacklogs] = useState(0);
   const [feedback, setFeedback] = useState('Active participant in technical workshops.');
-  const [saveToSupabase, setSaveToSupabase] = useState(isSupabaseConnected);
+  const [saveToSupabase, setSaveToSupabase] = useState(Boolean(isSupabaseConnected && !isDemoMode && isVerifiedAdmin));
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [successNotice, setSuccessNotice] = useState<string | null>(null);
+
 
   // Live calculation of Success Score and Risk metrics
   const liveScore = useMemo(() => {
@@ -430,29 +435,51 @@ export const AddStudentModal: React.FC<AddStudentModalProps> = ({
 
           {/* Database Target Selector */}
           <div className="pt-2">
-            <label className={`flex items-center gap-2.5 p-3 rounded-xl border transition-colors cursor-pointer ${
-              saveToSupabase 
-                ? 'bg-indigo-50/80 border-indigo-300 text-indigo-950' 
-                : 'bg-slate-50 border-slate-200 text-slate-700'
-            }`}>
-              <input
-                type="checkbox"
-                checked={saveToSupabase}
-                onChange={(e) => setSaveToSupabase(e.target.checked)}
-                className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500"
-              />
-              <div className="flex-1 text-xs">
-                <span className="font-bold flex items-center gap-1.5">
-                  <Database className="w-3.5 h-3.5 text-indigo-600" />
-                  Persist to Supabase Database (public.students)
-                </span>
-                <span className="text-[11px] text-slate-500 block mt-0.5">
-                  {isSupabaseConnected 
-                    ? 'Row will be inserted directly into remote PostgreSQL table and verified on page reload.' 
-                    : 'Supabase offline: will save to active session cohort.'}
-                </span>
+            {isDemoMode ? (
+              <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 flex items-start gap-2.5">
+                <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
+                <div>
+                  <span className="font-bold block">Offline Demo Mode (Database Writes Disabled)</span>
+                  <span className="text-[11px] text-amber-800">
+                    You are in Reviewer Demo Mode. This student record will be added to temporary local session memory only. Sign in with verified administrator credentials to persist to live Supabase.
+                  </span>
+                </div>
               </div>
-            </label>
+            ) : !isVerifiedAdmin ? (
+              <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-900 flex items-start gap-2.5">
+                <AlertCircle className="w-4 h-4 text-rose-600 flex-shrink-0 mt-0.5" />
+                <div>
+                  <span className="font-bold block">Administrator Authorization Required</span>
+                  <span className="text-[11px] text-rose-800">
+                    Only verified institutional administrators can persist student records to the remote database.
+                  </span>
+                </div>
+              </div>
+            ) : (
+              <label className={`flex items-center gap-2.5 p-3 rounded-xl border transition-colors cursor-pointer ${
+                saveToSupabase
+                  ? 'bg-indigo-50/80 border-indigo-300 text-indigo-950'
+                  : 'bg-slate-50 border-slate-200 text-slate-700'
+              }`}>
+                <input
+                  type="checkbox"
+                  checked={saveToSupabase}
+                  onChange={(e) => setSaveToSupabase(e.target.checked)}
+                  className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500"
+                />
+                <div className="flex-1 text-xs">
+                  <span className="font-bold flex items-center gap-1.5">
+                    <Database className="w-3.5 h-3.5 text-indigo-600" />
+                    Persist to Supabase Database (public.students)
+                  </span>
+                  <span className="text-[11px] text-slate-500 block mt-0.5">
+                    {isSupabaseConnected
+                      ? 'Row will be inserted directly into remote PostgreSQL table and verified on page reload.'
+                      : 'Supabase offline: will save to active session cohort.'}
+                  </span>
+                </div>
+              </label>
+            )}
           </div>
 
           {/* Actions */}

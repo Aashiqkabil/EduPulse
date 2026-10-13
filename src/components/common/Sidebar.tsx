@@ -21,6 +21,7 @@ interface SidebarProps {
   userRole?: string;
   currentIdentityName?: string;
   currentIdentityScope?: string;
+  isDemoMode?: boolean;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -31,6 +32,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   userRole = 'admin',
   currentIdentityName,
   currentIdentityScope,
+  isDemoMode = false,
 }) => {
   const allNavItems = [
     {
@@ -70,8 +72,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
     },
   ];
 
-  // If role is student, only provide Student Academic Portal navigation
-  // If teacher, provide Overview, Students, Analytics
+  // If role is student, provide Student Academic Portal navigation (and Demo Users if in Demo Mode)
+  // If teacher, provide Overview, Students, Analytics (and Demo Users if in Demo Mode)
   // If admin, provide all tabs including Data Import and Demo Users
   const navItems = userRole === 'student'
     ? [
@@ -81,13 +83,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
           icon: GraduationCap,
           description: 'Personal records & action plan',
           badge: 'Student'
-        }
+        },
+        ...(isDemoMode ? [{
+          id: 'demo-users' as NavTab,
+          label: 'Demo Personas',
+          icon: UserCheck,
+          description: 'Switch reviewer persona',
+          badge: 'Demo'
+        }] : [])
       ]
     : allNavItems.filter((item) => {
         if (item.id === 'data-import' && userRole !== 'admin') {
           return false;
         }
-        if (item.id === 'demo-users' && userRole !== 'admin') {
+        if (item.id === 'demo-users' && !isDemoMode && userRole !== 'admin') {
           return false;
         }
         return true;

@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { 
   Sidebar 
 } from './components/common/Sidebar';
@@ -91,9 +91,16 @@ export const App: React.FC = () => {
   const [currentDemoIdentity, setCurrentDemoIdentity] = useState<DemoIdentity>(DEFAULT_DEMO_IDENTITY);
 
   // Authentication & RBAC State
-  const [currentUserRole, setCurrentUserRole] = useState<UserRole>('admin');
+  const [isDemoMode, setIsDemoMode] = useState<boolean>(!isSupabaseConfigured());
+  const [currentUserRole, setCurrentUserRole] = useState<UserRole>('student'); // Secure default: student, NOT admin!
   const [currentUserProfile, setCurrentUserProfile] = useState<UserProfile | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(!isSupabaseConfigured());
+
+  // Ref to guard against asynchronous session checks overriding active Demo mode
+  const isDemoModeRef = useRef(isDemoMode);
+  useEffect(() => {
+    isDemoModeRef.current = isDemoMode;
+  }, [isDemoMode]);
 
   // Active Cohort State (Single Source of Truth)
   const [activeStudents, setActiveStudents] = useState<Student[]>(SYNTHETIC_STUDENTS);
@@ -150,6 +157,14 @@ export const App: React.FC = () => {
 
   // Handle Demo Identity change logic (Stage 2 & 3)
   const handleSelectDemoIdentity = (identity: DemoIdentity) => {
+    // Live authenticated guard: in live mode, role is anchored to verified database profile
+    if (!isDemoMode && currentUserProfile) {
+      if (identity.role !== currentUserProfile.role) {
+        alert(`Persona change blocked: You are currently signed in with authenticated ${currentUserProfile.role} credentials (${currentUserProfile.email}). Role switching is only permitted in Offline Demo Mode.`);
+        return;
+      }
+    }
+
     setCurrentDemoIdentity(identity);
     setCurrentUserRole(identity.role);
     setSelectedDepartment('ALL');
@@ -165,6 +180,12 @@ export const App: React.FC = () => {
 
   // Handle role switcher button click (maps directly to preconfigured persona)
   const handleSelectRole = (role: UserRole) => {
+    if (!isDemoMode && currentUserProfile) {
+      if (role !== currentUserProfile.role) {
+        alert(`Role switch blocked: Active session is authenticated as verified ${currentUserProfile.role}. Role switching is available in Offline Demo Mode.`);
+        return;
+      }
+    }
     const targetIdentity = DEMO_IDENTITIES.find(i => i.role === role) || DEFAULT_DEMO_IDENTITY;
     handleSelectDemoIdentity(targetIdentity);
   };
@@ -187,7 +208,7 @@ export const App: React.FC = () => {
         setSupabaseMessage(health.message);
         setSupabaseRecordCount(health.count ?? 0);
 
-        if (attemptAutoLoad && (health.count ?? 0) > 0) {
+        if (attemptAutoLoad && !isDemoModeRef.current && (health.count ?? 0) > 0) {
           const fetchRes = await fetchStudentsFromSupabase();
           if (!fetchRes.error && fetchRes.data.length > 0) {
             setActiveStudents(fetchRes.data);
@@ -212,39 +233,93 @@ export const App: React.FC = () => {
     if (isSupabaseConfigured()) {
       const client = getSupabaseClient();
       if (client) {
-        // Initial session check
-        client.auth.getSession().then(({ data }) => {
-          if (data?.session?.user) {
+        // Initial session restoration check
+        client.auth.getSession().then(async ({ data, error }) => {
+          if (isDemoModeRef.current) {
+            return;
+          }
+          if (error || !data?.session?.user) {
+            if (!isDemoModeRef.current) {
+              setIsAuthenticated(false);
+              setIsDemoMode(false);
+              setCurrentUserProfile(null);
+              setCurrentUserRole('student');
+            }
+            return;
+          }
+
+          const profileRes = await fetchUserProfile(data.session.user.id);
+          if (isDemoModeRef.current) {
+            return;
+          }
+          if (profileRes.profile && profileRes.profile.isActive) {
             setIsAuthenticated(true);
-            fetchUserProfile(data.session.user.id).then(res => {
-              if (res.profile) {
-                setCurrentUserProfile(res.profile);
-                setCurrentUserRole(res.profile.role);
-                if (res.profile.role === 'student') {
-                  setCurrentTab('student-portal');
-                }
-              }
-            });
+            setIsDemoMode(false);
+            setCurrentUserProfile(profileRes.profile);
+            setCurrentUserRole(profileRes.profile.role);
+            if (profileRes.profile.role === 'student') {
+              setCurrentTab('student-portal');
+            }
+            // Auto-load live cohort from Supabase
+            const fetchRes = await fetchStudentsFromSupabase();
+            if (!fetchRes.error && fetchRes.data.length > 0) {
+              setActiveStudents(fetchRes.data);
+              setDatasetSource('Supabase DB');
+              setSupabaseRecordCount(fetchRes.data.length);
+            }
+          } else {
+            // Profile missing, deactivated, or relation does not exist
+            await client.auth.signOut();
+            setIsAuthenticated(false);
+            setIsDemoMode(false);
+            setCurrentUserProfile(null);
+            setCurrentUserRole('student');
+            if (profileRes.error) {
+              setHasError(true);
+              setErrorMessage(profileRes.error);
+            }
           }
         });
 
         // Reactive Auth State Change Subscription
         const { data: authListener } = client.auth.onAuthStateChange(async (event, session) => {
-          if (session?.user) {
-            setIsAuthenticated(true);
-            const res = await fetchUserProfile(session.user.id);
-            if (res.profile) {
-              setCurrentUserProfile(res.profile);
-              setCurrentUserRole(res.profile.role);
-              if (res.profile.role === 'student') {
-                setCurrentTab('student-portal');
+          if (isDemoModeRef.current) {
+            return;
+          }
+          if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+            if (session?.user) {
+              const res = await fetchUserProfile(session.user.id);
+              if (isDemoModeRef.current) {
+                return;
+              }
+              if (res.profile && res.profile.isActive) {
+                setIsAuthenticated(true);
+                setIsDemoMode(false);
+                setCurrentUserProfile(res.profile);
+                setCurrentUserRole(res.profile.role);
+                if (res.profile.role === 'student') {
+                  setCurrentTab('student-portal');
+                }
+              } else {
+                await client.auth.signOut();
+                setIsAuthenticated(false);
+                setIsDemoMode(false);
+                setCurrentUserProfile(null);
+                setCurrentUserRole('student');
+                if (res.error) {
+                  setHasError(true);
+                  setErrorMessage(res.error);
+                }
               }
             }
           } else if (event === 'SIGNED_OUT') {
-            setIsAuthenticated(false);
-            setCurrentUserProfile(null);
-            setCurrentUserRole('admin');
-            setCurrentTab('overview');
+            if (!isDemoModeRef.current) {
+              setIsAuthenticated(false);
+              setIsDemoMode(false);
+              setCurrentUserProfile(null);
+              setCurrentUserRole('student');
+              setCurrentTab('overview');
+            }
           }
         });
 
@@ -288,8 +363,31 @@ export const App: React.FC = () => {
     fileName: string,
     saveToSupabase: boolean = false
   ): Promise<{ success: boolean; count?: number; error?: string | null }> => {
-    if (currentUserRole !== 'admin') {
-      return { success: false, error: 'Unauthorized: Only institutional Administrators can import cohorts.' };
+    // Safeguard: Demo mode must never write to remote Supabase
+    if (isDemoMode) {
+      if (saveToSupabase) {
+        return {
+          success: false,
+          error: 'Database Persistence Blocked: Remote database writes are disabled in Offline Demo Mode. Sign in with verified institutional administrator credentials to persist to live Supabase.',
+        };
+      }
+
+      // Local-only session apply
+      setActiveStudents(importedStudents);
+      setDatasetSource('Imported CSV');
+      setImportedFileName(fileName);
+      setHasError(false);
+      setSelectedDepartment('ALL');
+      setSearchQuery('');
+      return { success: true, count: 0 };
+    }
+
+    // Live Mode: Derive authorization strictly from server-verified profile
+    if (!currentUserProfile || currentUserProfile.role !== 'admin' || !currentUserProfile.isActive) {
+      return {
+        success: false,
+        error: 'Unauthorized: Only verified institutional Administrators can import cohorts to Supabase.',
+      };
     }
 
     if (saveToSupabase && isSupabaseConfigured()) {
@@ -321,7 +419,7 @@ export const App: React.FC = () => {
       };
     }
 
-    // Local-only session apply (Explicitly marked as local session, saved count = 0 to DB)
+    // Local-only session apply for live admin
     setActiveStudents(importedStudents);
     setDatasetSource('Imported CSV');
     setImportedFileName(fileName);
@@ -336,8 +434,20 @@ export const App: React.FC = () => {
     newStudent: Student,
     saveToDb: boolean = false
   ): Promise<{ success: boolean; error?: string | null }> => {
-    if (currentUserRole !== 'admin') {
-      return { success: false, error: 'Unauthorized: Only institutional Administrators can add student records.' };
+    if (isDemoMode) {
+      if (saveToDb) {
+        return {
+          success: false,
+          error: 'Database Persistence Blocked: Remote database writes are disabled in Offline Demo Mode. Sign in with verified institutional administrator credentials to persist to live Supabase.',
+        };
+      }
+      setActiveStudents(prev => [newStudent, ...prev.filter(s => s.studentId !== newStudent.studentId)]);
+      setHasError(false);
+      return { success: true };
+    }
+
+    if (!currentUserProfile || currentUserProfile.role !== 'admin' || !currentUserProfile.isActive) {
+      return { success: false, error: 'Unauthorized: Only verified institutional Administrators can add student records to the database.' };
     }
 
     if (saveToDb && isSupabaseConfigured()) {
@@ -369,15 +479,21 @@ export const App: React.FC = () => {
     attendance: number,
     assignment: number
   ): Promise<{ success: boolean; error?: string | null }> => {
-    if (currentUserRole !== 'teacher' && currentUserRole !== 'admin') {
-      return { success: false, error: 'Unauthorized: Students cannot modify marks.' };
-    }
+    if (isDemoMode) {
+      if (currentUserRole !== 'teacher' && currentUserRole !== 'admin') {
+        return { success: false, error: 'Unauthorized: Students cannot modify marks.' };
+      }
+    } else {
+      if (!currentUserProfile || (currentUserProfile.role !== 'teacher' && currentUserProfile.role !== 'admin') || !currentUserProfile.isActive) {
+        return { success: false, error: 'Unauthorized: Active faculty or administrator permissions required.' };
+      }
 
-    // If active dataset is live Supabase, call audited RPC
-    if (datasetSource === 'Supabase DB' && isSupabaseConfigured()) {
-      const res = await updateStudentMarksInSupabase(studentId, attendance, assignment);
-      if (!res.success) {
-        return { success: false, error: res.error };
+      // If active dataset is live Supabase, call audited RPC
+      if (datasetSource === 'Supabase DB' && isSupabaseConfigured()) {
+        const res = await updateStudentMarksInSupabase(studentId, attendance, assignment);
+        if (!res.success) {
+          return { success: false, error: res.error };
+        }
       }
     }
 
@@ -415,12 +531,16 @@ export const App: React.FC = () => {
 
   // Sign out handler
   const handleSignOut = async () => {
+    isDemoModeRef.current = false;
     await signOutUser();
     setIsAuthenticated(false);
+    setIsDemoMode(false);
     setCurrentUserProfile(null);
+    setCurrentUserRole('student');
     handleSelectDemoIdentity(DEFAULT_DEMO_IDENTITY);
     setCurrentTab('overview');
   };
+
 
   // Restore synthetic demo dataset (preserves Supabase database records)
   const handleRestoreSyntheticDemo = () => {
@@ -458,18 +578,39 @@ export const App: React.FC = () => {
     return (
       <LoginView
         onSuccess={async () => {
-          setIsAuthenticated(true);
           const client = getSupabaseClient();
           if (client) {
             const { data } = await client.auth.getUser();
             if (data?.user) {
               const profileRes = await fetchUserProfile(data.user.id);
-              if (profileRes.profile) {
+              if (profileRes.profile && profileRes.profile.isActive) {
+                isDemoModeRef.current = false;
+                setIsAuthenticated(true);
+                setIsDemoMode(false);
                 setCurrentUserProfile(profileRes.profile);
                 setCurrentUserRole(profileRes.profile.role);
+                setHasError(false);
+                setErrorMessage('');
                 if (profileRes.profile.role === 'student') {
                   setCurrentTab('student-portal');
+                } else {
+                  setCurrentTab('overview');
                 }
+                const fetchRes = await fetchStudentsFromSupabase();
+                if (!fetchRes.error && fetchRes.data.length > 0) {
+                  setActiveStudents(fetchRes.data);
+                  setDatasetSource('Supabase DB');
+                  setSupabaseRecordCount(fetchRes.data.length);
+                }
+              } else {
+                await client.auth.signOut();
+                isDemoModeRef.current = false;
+                setIsAuthenticated(false);
+                setIsDemoMode(false);
+                setCurrentUserProfile(null);
+                setCurrentUserRole('student');
+                setHasError(true);
+                setErrorMessage(profileRes.error || 'User profile could not be verified in public.profiles.');
               }
             }
           }
@@ -477,8 +618,21 @@ export const App: React.FC = () => {
         onEnterDemoMode={(demoRole) => {
           const role = demoRole || 'admin';
           const identity = DEMO_IDENTITIES.find(i => i.role === role) || DEFAULT_DEMO_IDENTITY;
-          handleSelectDemoIdentity(identity);
+          isDemoModeRef.current = true;
+          setIsDemoMode(true);
           setIsAuthenticated(true);
+          setCurrentUserProfile(null);
+          setActiveStudents(SYNTHETIC_STUDENTS);
+          setDatasetSource('Synthetic Demo');
+          setImportedFileName(null);
+          setHasError(false);
+          setErrorMessage('');
+          handleSelectDemoIdentity(identity);
+          if (role === 'student') {
+            setCurrentTab('student-portal');
+          } else {
+            setCurrentTab('overview');
+          }
         }}
         isSupabaseConnected={supabaseStatus === 'connected'}
       />
@@ -503,6 +657,7 @@ export const App: React.FC = () => {
         userRole={currentUserRole}
         currentIdentityName={displayName}
         currentIdentityScope={currentDemoIdentity.assignedScope}
+        isDemoMode={isDemoMode}
       />
 
       {/* Main Content Area */}
@@ -520,7 +675,7 @@ export const App: React.FC = () => {
           userRole={currentUserRole}
           userEmail={displayEmail}
           userName={displayName}
-          isDemoSession={datasetSource === 'Synthetic Demo'}
+          isDemoSession={isDemoMode || datasetSource === 'Synthetic Demo'}
           onSignOut={handleSignOut}
           onOpenDemoUsers={() => setCurrentTab('demo-users')}
         />
@@ -701,6 +856,8 @@ export const App: React.FC = () => {
                   } : undefined}
                   onAddStudent={handleAddStudent}
                   isSupabaseConnected={supabaseStatus === 'connected'}
+                  isDemoMode={isDemoMode}
+                  isVerifiedAdmin={Boolean(currentUserProfile && currentUserProfile.role === 'admin' && currentUserProfile.isActive)}
                 />
               )}
 
@@ -711,7 +868,7 @@ export const App: React.FC = () => {
                 />
               )}
 
-              {currentTab === 'data-import' && currentUserRole === 'admin' && (
+              {currentTab === 'data-import' && (isDemoMode ? currentUserRole === 'admin' : currentUserProfile?.role === 'admin') && (
                 <DataImportTab 
                   onApplyImport={handleApplyImport}
                   datasetSource={datasetSource}
@@ -721,6 +878,8 @@ export const App: React.FC = () => {
                   supabaseConnected={supabaseStatus === 'connected'}
                   supabaseMessage={supabaseMessage}
                   onRefreshFromSupabase={handleLoadFromSupabase}
+                  isDemoMode={isDemoMode}
+                  isVerifiedAdmin={Boolean(currentUserProfile && currentUserProfile.role === 'admin' && currentUserProfile.isActive)}
                 />
               )}
 

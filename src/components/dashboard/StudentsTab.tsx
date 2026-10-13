@@ -35,6 +35,8 @@ interface StudentsTabProps {
   };
   onAddStudent?: (student: Student, saveToDb: boolean) => Promise<{ success: boolean; error?: string | null }>;
   isSupabaseConnected?: boolean;
+  isDemoMode?: boolean;
+  isVerifiedAdmin?: boolean;
 }
 
 type SortField = 'studentId' | 'name' | 'cgpa' | 'attendanceRate' | 'successScore';
@@ -53,6 +55,8 @@ export const StudentsTab: React.FC<StudentsTabProps> = ({
   assignedClassInfo,
   onAddStudent,
   isSupabaseConnected,
+  isDemoMode = false,
+  isVerifiedAdmin = false,
 }) => {
   const [academicRiskFilter, setAcademicRiskFilter] = useState<string>('ALL');
   const [placementRiskFilter, setPlacementRiskFilter] = useState<string>('ALL');
@@ -542,6 +546,8 @@ export const StudentsTab: React.FC<StudentsTabProps> = ({
           onSaveStudent={onAddStudent}
           departments={departments}
           isSupabaseConnected={Boolean(isSupabaseConnected)}
+          isDemoMode={isDemoMode}
+          isVerifiedAdmin={isVerifiedAdmin}
         />
       )}
     </div>

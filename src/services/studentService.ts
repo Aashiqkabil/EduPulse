@@ -1,6 +1,7 @@
 import { Student, RiskLevel, ScoreBreakdown } from '../types/student';
 import { getSupabaseClient, isSupabaseConfigured } from './supabaseClient';
 import { calculateStudentSuccessScore } from '../utils/scoringEngine';
+import { fetchUserProfile } from './authService';
 
 export interface DbStudentRow {
   id?: string;
@@ -220,7 +221,8 @@ export async function fetchStudentsFromSupabase(): Promise<{
 }
 
 /**
- * Inserts a single student record into the Supabase database
+ * Inserts a single student record into the Supabase database.
+ * Requires authenticated institutional administrator session.
  */
 export async function insertStudentToSupabase(student: Student): Promise<{
   success: boolean;
@@ -243,7 +245,28 @@ export async function insertStudentToSupabase(student: Student): Promise<{
   }
 
   try {
-    // Ensure deterministic score breakdown is calculated prior to DB persistence
+    // 1. Verify active authenticated session
+    const { data: sessionData, error: sessionErr } = await client.auth.getSession();
+    const session = sessionData?.session;
+    if (sessionErr || !session?.user) {
+      return {
+        success: false,
+        data: null,
+        error: 'Authentication Required: You must be signed in with institutional administrator credentials to insert records into the database.',
+      };
+    }
+
+    // 2. Verify server-managed administrator role
+    const profileRes = await fetchUserProfile(session.user.id);
+    if (!profileRes.profile || profileRes.profile.role !== 'admin' || !profileRes.profile.isActive) {
+      return {
+        success: false,
+        data: null,
+        error: profileRes.error || 'Authorization Denied: Only verified institutional Administrators can add student records to the database.',
+      };
+    }
+
+    // 3. Ensure deterministic score breakdown is calculated prior to DB persistence
     const scored = student.successScore !== null && student.successScore !== undefined
       ? student
       : { ...student, ...calculateStudentSuccessScore(student) };
@@ -279,9 +302,10 @@ export async function insertStudentToSupabase(student: Student): Promise<{
 }
 
 /**
- * Replaces or synchronizes the student cohort in Supabase with verified students.
- * Tries the atomic stored procedure `upsert_student_cohort` first,
- * falls back to legacy `replace_student_cohort`, and then directly to table upsert.
+ * Persists or updates the student cohort in Supabase with verified students.
+ * SECURITY: Requires verified institutional administrator authentication.
+ * Uses atomic SECURITY DEFINER procedure `upsert_student_cohort`.
+ * Does NOT fall back to insecure bypasses or direct table writes.
  */
 export async function replaceCohortInSupabase(students: Student[]): Promise<{
   success: boolean;
@@ -313,66 +337,83 @@ export async function replaceCohortInSupabase(students: Student[]): Promise<{
     };
   }
 
-  // Ensure all student records have computed scores and risk metrics
-  const fullDbRows = students.map((s) => {
-    const scored = s.successScore !== null && s.successScore !== undefined
-      ? s
-      : { ...s, ...calculateStudentSuccessScore(s) };
-    return toDbStudent(scored);
-  });
-
   try {
-    let writeSucceeded = false;
-    let writeError: any = null;
+    // 1. Verify active authenticated session
+    const { data: sessionData, error: sessionErr } = await client.auth.getSession();
+    const session = sessionData?.session;
+    if (sessionErr || !session?.user) {
+      return {
+        success: false,
+        count: 0,
+        error: 'Authentication Required: You must be signed in with verified institutional administrator credentials to persist cohorts to Supabase.',
+      };
+    }
 
-    // 1. Attempt non-destructive atomic upsert RPC first
+    // 2. Verify server-managed administrator role from authoritative public.profiles
+    const profileRes = await fetchUserProfile(session.user.id);
+    if (!profileRes.profile || profileRes.profile.role !== 'admin' || !profileRes.profile.isActive) {
+      return {
+        success: false,
+        count: 0,
+        error: profileRes.error || 'Authorization Denied: Only verified institutional Administrators can import cohorts to Supabase.',
+      };
+    }
+
+    // 3. Ensure all student records have computed scores and risk metrics
+    const fullDbRows = students.map((s) => {
+      const scored = s.successScore !== null && s.successScore !== undefined
+        ? s
+        : { ...s, ...calculateStudentSuccessScore(s) };
+      return toDbStudent(scored);
+    });
+
+    // 4. Invoke the atomic, non-destructive upsert stored procedure
+    // Note: All insecure legacy fallbacks (replace_student_cohort and direct table upserts) are permanently removed.
     const { data: upsertData, error: upsertError } = await client.rpc('upsert_student_cohort', {
       p_students: fullDbRows,
     });
 
-    if (!upsertError && upsertData?.success) {
-      writeSucceeded = true;
-    } else {
-      writeError = upsertError;
-
-      // 2. Fall back to legacy replace_student_cohort RPC
-      if (upsertError && (upsertError.code === 'PGRST202' || upsertError.message.includes('function') || upsertError.message.includes('not found') || upsertError.message.includes('permission denied'))) {
-        const { data: legacyRpcData, error: legacyRpcError } = await client.rpc('replace_student_cohort', {
-          p_students: fullDbRows,
-        });
-
-        if (!legacyRpcError && legacyRpcData?.success) {
-          writeSucceeded = true;
-        } else {
-          writeError = legacyRpcError || writeError;
-        }
+    if (upsertError) {
+      if (
+        upsertError.code === 'PGRST202' ||
+        upsertError.message.includes('function') ||
+        upsertError.message.includes('not found')
+      ) {
+        return {
+          success: false,
+          count: 0,
+          error: "Database Procedure Missing: 'upsert_student_cohort' is not installed on remote Supabase. Please execute migration 20261012000001_implement_minimum_rbac.sql in your Supabase SQL editor.",
+        };
       }
 
-      // 3. Fall back to direct table upsert on public.students
-      if (!writeSucceeded) {
-        const { data: tableData, error: tableError } = await client
-          .from('students')
-          .upsert(fullDbRows, { onConflict: 'student_id' })
-          .select('student_id');
-
-        if (!tableError && tableData && tableData.length > 0) {
-          writeSucceeded = true;
-        } else {
-          writeError = tableError || writeError;
-        }
+      if (
+        upsertError.code === '42501' ||
+        upsertError.message.includes('permission denied') ||
+        upsertError.message.includes('Unauthorized')
+      ) {
+        return {
+          success: false,
+          count: 0,
+          error: `Database Authorization Denied: Caller is not recognized as an active administrator by PostgreSQL RLS (${upsertError.message}).`,
+        };
       }
-    }
 
-    if (!writeSucceeded) {
-      const reportedError = writeError?.message || 'Database rejected cohort synchronization.';
       return {
         success: false,
         count: 0,
-        error: `Failed to persist cohort in Supabase: ${reportedError} (Code: ${writeError?.code || 'RLS'}).`,
+        error: `Failed to persist cohort in Supabase: ${upsertError.message} (Code: ${upsertError.code || 'RPC'}).`,
       };
     }
 
-    // 4. Strict Post-Write Verification (Requirement 7):
+    if (!upsertData?.success) {
+      return {
+        success: false,
+        count: 0,
+        error: upsertData?.error || 'Database RPC upsert_student_cohort completed without returning success.',
+      };
+    }
+
+    // 5. Strict Post-Write Verification against freshly fetched database rows:
     // Fetch affected student IDs from Supabase to confirm they actually exist in public.students.
     const targetIds = fullDbRows.map(r => r.student_id);
     const { data: verifiedRows, error: verifyError } = await client
@@ -410,6 +451,7 @@ export async function replaceCohortInSupabase(students: Student[]): Promise<{
     };
   }
 }
+
 
 /**
  * Updates marks and attendance for a student via the audited teacher RPC
